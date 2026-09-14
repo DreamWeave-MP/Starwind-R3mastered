@@ -23,6 +23,10 @@ The current project is simultaneously dealing with:
 
 R3mastered is the point where those lines become one explicit project boundary.
 
+Approximately 42 months passed between the first preserved StarwindServer
+commit on 2023-03-31 and the merged-plugin rework and creation of this repository
+on 2026-09-13–14.
+
 ## September 13: motherJungle attacks the hard version of decoupling
 
 The 2026 motherJungle sequence is the mature descendant of the original 2023
