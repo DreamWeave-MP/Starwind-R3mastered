@@ -66,12 +66,12 @@ logo_text = "Starwind R3mastered"
 # To use it, fill the values in yourself!
 # Name is the displayed text, whereas url is the actual path
 # relative to your site url.
-# menu_items = [
-#     {name = "blog", url = "$BASE_URL"},
-#     {name = "tags", url = "$BASE_URL/tags"},
-#     {name = "archive", url = "$BASE_URL/archive"},
-#     {name = "about me", url = "$BASE_URL/about"},
-# ]
+menu_items = [
+    {name = "Home", url = "$BASE_URL/home"},
+    {name = "Docs", url = "$BASE_URL/docs"},
+    {name = "History", url = "$BASE_URL/docs/history"},
+    {name = "GitHub", url = "https://github.com/DreamWeave-MP/Starwind-R3mastered"},
+]
 
 
 # The logo link - defaults to base_url.
@@ -125,6 +125,7 @@ github_project = "Starwind-R3mastered"
 # Such as your blog, etc.
 excluded_dirs = [
     'blog',
+    'docs',
 ]
 
 

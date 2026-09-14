@@ -1,4 +1,3 @@
 +++
-title = "S3maphore Changelog"
-
+title = "Starwind: R3mastered Changelog"
 +++

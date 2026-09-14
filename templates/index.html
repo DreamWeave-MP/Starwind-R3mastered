@@ -153,7 +153,7 @@
         {% else %}
             <div class="copyright">
                 <div class="button-stack copyright-theme" style="align-items:center;">
-                    <span>© {{ date_macros::now_year() }}{% if config.extra.author %}{{ author_string }}{% else %} :: Brought to you by <a href="https://github.com/DreamWeave-MP">DreamWeave</a>{% endif %}</span>
+                    <span>© {{ date_macros::now_year() }}{% if config.extra.author %}{{ config.extra.author }}{% else %} :: Brought to you by <a href="https://github.com/DreamWeave-MP">DreamWeave</a>{% endif %}</span>
                     <a class="dw-download-button" style="opacity:1.0;" href="https://github.com/DreamWeave-MP/DreamWeave-Mod-Template/">
                         <b>Use this Mod Template</b>
                     </a>
