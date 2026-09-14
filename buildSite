@@ -31,11 +31,15 @@ def slugify(text: str, preserve_underscores: Optional[bool]) -> str:
     if preserve_underscores:
         # Replace spaces/hypens with underscores
         text = re.sub(r"[\s\--]+", "_", text)
+        text = re.sub(r"[^a-z0-9_]+", "_", text)
+        text = re.sub(r"_+", "_", text)
     else:
         # Replace spaces/underscores with hyphens
         text = re.sub(r"[\s_-]+", "-", text)
+        text = re.sub(r"[^a-z0-9-]+", "-", text)
+        text = re.sub(r"-+", "-", text)
 
-    return text
+    return text.strip("_-")
 
 
 def parse_front_matter(md_path: Path):
@@ -367,8 +371,9 @@ if __name__ == "__main__":
 
             frontmatter = parse_front_matter(CurrentDir / subDir / "index.md")
 
+            changelog_title = f"{frontmatter['title']} Changelog"
             changelog_str = f"""---
-title: {frontmatter['title']} Changelog
+title: {json.dumps(changelog_title)}
 slug: changelog
 version: {frontmatter['extra']['version']}
 ---
