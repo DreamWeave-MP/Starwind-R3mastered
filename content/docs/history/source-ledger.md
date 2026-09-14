@@ -25,6 +25,13 @@ preserved repository bundle, and which come from participant recollection.
 - Current public description: DreamWeave patching, merging, and deployment forge for MPP and TSI.
 - Historical use: Makron-backed CI, CPP build, TES3MP service/deploy layer, Modding-OpenMW migration, Naboo integration, 2025 SW4 modernization, GitHub-CI migration.
 
+### Makron
+
+- Repository: <https://github.com/DreamWeave-MP/makron>
+- Historical use: reproducible Starwind build environment, containerized tooling, and the single-player/multiplayer split.
+- Earliest documented commit: [`9443f05a`](https://github.com/DreamWeave-MP/makron/commit/9443f05a0e73ce6ad27458a51d342edf2a44b0c5), 2024-03-05.
+- Historical namespace: CI references `modding-openmw/makron` before the project moved to GitHub.
+
 ### S3ctor's S3cret St4sh
 
 - Repository: <https://github.com/DreamWeave-MP/S3ctors-S3cret-St4sh>
@@ -114,14 +121,6 @@ cd StarwindServer
 git show 1bf98e0d4856f9b53f16993be9947cffeac8b72a
 git show 85451fc21534e281639852f21ceff2bd851e6fec
 ```
-
-### Makron
-
-- Evidence: supplied full Git bundle.
-- Earliest commit: `9443f05a0e73ce6ad27458a51d342edf2a44b0c5`, 2024-03-05 01:05 -06:00.
-- Historical namespace evidence: CI references `modding-openmw/makron`; later commits add GitHub CI and DreamWeave dependency URLs.
-- Used for: reproducible build-environment chronology and the single-player/multiplayer split rationale.
-- Direct public commit links are intentionally omitted here unless/until a currently public Makron repository URL is verified.
 
 ## Supplied content/artifact evidence
 

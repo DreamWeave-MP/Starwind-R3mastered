@@ -12,7 +12,7 @@ lineage—TES3MP server scripting—also gets a modernization pass.
 
 ## December 2025: Makron and Builder move to GitHub CI
 
-Makron's supplied history records:
+The public [Makron repository](https://github.com/DreamWeave-MP/makron) records:
 
 - `9135a6ed2df7b4b34ac442f8723ca8efef786009` — **2025-12-14** — adds GitHub CI.
 - `fd750286314caed71ffcdc21bb63968ecdbc9704` — downloads Morrobroom from DreamWeave.

@@ -12,9 +12,9 @@ environment, and **Starwind-Builder**, the project-specific forge.
 
 ## March 5: Makron
 
-The supplied Makron Git history begins:
+The public [Makron repository](https://github.com/DreamWeave-MP/makron) begins:
 
-- `9443f05a0e73ce6ad27458a51d342edf2a44b0c5` — **2024-03-05 01:05 -06:00** — `Initial commit`.
+- [`9443f05a0e73ce6ad27458a51d342edf2a44b0c5`](https://github.com/DreamWeave-MP/makron/commit/9443f05a0e73ce6ad27458a51d342edf2a44b0c5) — **2024-03-05 01:05 -06:00** — `Initial commit`.
 
 The repository's README explains its purpose directly. Makron is derived from
 Modding-OpenMW's `mockmw`, but customized around Starwind/TrenchBroom tooling.
@@ -26,10 +26,10 @@ Its rationale separates two products of the build:
 The README explicitly frames the goal as making merged-plugin development
 **more reproducible**.
 
-**Evidence status:** the full Makron history was supplied as a Git bundle. The
-historical GitLab namespace is visible in its CI (`modding-openmw/makron`), but
-this documentation does not invent direct public commit URLs where a currently
-public commit endpoint has not been verified.
+**Evidence status:** Makron is publicly available at
+<https://github.com/DreamWeave-MP/makron>. Its historical GitLab namespace is
+visible in its CI (`modding-openmw/makron`), and the repository history is now
+linked directly where relevant.
 
 ## March 5: Starwind-Builder follows two hours later
 
