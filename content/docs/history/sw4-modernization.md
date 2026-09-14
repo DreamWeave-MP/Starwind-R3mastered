@@ -23,6 +23,8 @@ commit burst is real and unusually concentrated.
 
 ## May 7: SWAMP enters Builder
 
+> Yer in mah SWAMP
+
 - [`50af8cb`](https://github.com/DreamWeave-MP/Starwind-Builder/commit/50af8cb19ec7ec30bfc63b3e150ae5c855098aca) — **2025-05-07** — `Add intial version of SWAMP modernization patches with handling for mounts and player ships`.
 
 This is the larger successor to the St4sh freighter prototype. The commit adds
