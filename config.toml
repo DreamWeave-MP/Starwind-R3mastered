@@ -37,6 +37,7 @@ github_username = "DreamWeave-MP"
 github_project = "Starwind-R3mastered"
 
 logo_text = "Starwind R3mastered"
+favicon = "img/starwind.svg"
 footer_text = "Starwind R3mastered · DreamWeave & TSI contributors"
 
 # Teal, recolored further in sass/brand.sass.
