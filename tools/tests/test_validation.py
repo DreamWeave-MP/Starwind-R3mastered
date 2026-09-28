@@ -136,6 +136,18 @@ class ProjectRules(unittest.TestCase):
         self.assertError(MINIMAL + '[[mirrors]]\nurl = "https://cache.example.org/{hash}"\n', "unknown placeholder")
         self.assertError(MINIMAL + '[[mirrors]]\nurl = "https://cache.example.org/{slug}/"\n', "every artifact would share one URL")
 
+    def test_binary_packages(self):
+        binary = MINIMAL + 'type = "tool"\n[package]\nformat = "binary"\nbinary = "broom"\n[[platforms]]\nos = "linux"\narch = "x86_64"\n'
+        self.assertEqual(self.errors_for(binary), [])
+        self.assertError(MINIMAL + '[package]\nformat = "binary"\n[[platforms]]\nos = "linux"\narch = "x86_64"\n', "names the Cargo binary")
+        self.assertError(MINIMAL + '[package]\nformat = "binary"\nbinary = "broom"\n', "lists the [[platforms]] it is built for")
+        self.assertError(binary.replace('[[platforms]]', '[[components]]\nid = "core"\nname = "Core"\npath = "00 Core"\n\n[[platforms]]'), "has no [[components]]")
+        self.assertError(binary + '[openmw]\ncontent_files = ["Broom.omwscripts"]\n', "no [openmw] install data")
+        self.assertError(binary.replace('binary = "broom"', 'binary = "broom"\ndocumentation = true'), "cannot add the rendered docs")
+        self.assertError(MINIMAL + '[package]\nbinary = "broom"\n', 'only format = "binary" packages have a binary')
+        self.assertError(MINIMAL + '[package]\ninclude = ["README.md"]\n', "only format = \"binary\" packages include extra files")
+        self.assertError(binary + '[[platforms]]\nos = "linux"\narch = "x86_64"\n', "listed twice")
+
     def test_media_needs_alt_text(self):
         self.assertError(MINIMAL + '[[media]]\nfile = "media/a.webp"\n', "alt")
 
@@ -224,7 +236,7 @@ class RepositoryRules(unittest.TestCase):
     def test_palette_must_exist(self):
         config = (self.scratch.root / "config.toml").read_text().replace("[extra]\n", '[extra]\npalette = "blue"\n', 1)
         (self.scratch.root / "config.toml").write_text(config)
-        self.assertError("'blue' is not one of purple, teal, gold, ember, moss")
+        self.assertError("'blue' is not one of purple, teal, gold, ember, moss, umber")
 
     def test_v4_pages_without_mod_toml_are_rejected(self):
         self.scratch.write("content/old/index.md", '+++\ntitle = "Old"\n[extra]\nversion = "0.5"\n+++\n')
