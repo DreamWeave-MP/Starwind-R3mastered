@@ -10,7 +10,7 @@ extra:
 ---
 
 
-{% usage_note(title="Guide status") %}
+{% callout(kind="note", title="Guide status") %}
 **Record-derived; awaiting full playtest verification.** The route below is reconstructed from the current Definitive journal, dialogue, scripts, placements and item records. If playtesting proves a different route, update the guide rather than forcing the game to match this draft.
 {% end %}
 
@@ -44,7 +44,9 @@ extra:
 
 > **Expected journal update — index 15:** I turned in my Bounty and can return to the terminal to receive another whenever I please.
 
-> **Playtest flag:** 3 journal stages on this page lack a literal setter in the current static scan.
+{% callout(kind="warning", title="Playtest flag") %}
+3 journal stages on this page lack a literal setter in the current static scan.
+{% end %}
 
 {% technical_details(title="Technical / QA reference") %}
 **Journal ID:** `SW_BountyGuild1`

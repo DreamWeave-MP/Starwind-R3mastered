@@ -10,7 +10,7 @@ extra:
 ---
 
 
-{% usage_note(title="Guide status") %}
+{% callout(kind="note", title="Guide status") %}
 **Record-derived; awaiting full playtest verification.** The route below is reconstructed from the current Definitive journal, dialogue, scripts, placements and item records. If playtesting proves a different route, update the guide rather than forcing the game to match this draft.
 {% end %}
 
@@ -42,7 +42,9 @@ Allow the scripted event handled by `SW_BuildCapitalTower` to complete.
 
 > **Expected journal update — index 15:** Not actually using this journal entry at all SW_TarisSect[Part]
 
-> **Playtest flag:** 1 journal stage on this page lack a literal setter in the current static scan.
+{% callout(kind="warning", title="Playtest flag") %}
+1 journal stage on this page lack a literal setter in the current static scan.
+{% end %}
 
 ## Endings & branches
 

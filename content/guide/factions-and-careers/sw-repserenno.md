@@ -10,7 +10,7 @@ extra:
 ---
 
 
-{% usage_note(title="Guide status") %}
+{% callout(kind="note", title="Guide status") %}
 **Record-derived; awaiting full playtest verification.** The route below is reconstructed from the current Definitive journal, dialogue, scripts, placements and item records. If playtesting proves a different route, update the guide rather than forcing the game to match this draft.
 {% end %}
 
@@ -70,7 +70,9 @@ extra:
 
 **Outcome:** this journal entry is marked as a finished branch.
 
-> **Playtest flag:** 7 journal stages on this page lack a literal setter in the current static scan.
+{% callout(kind="warning", title="Playtest flag") %}
+7 journal stages on this page lack a literal setter in the current static scan.
+{% end %}
 
 ## Endings & branches
 

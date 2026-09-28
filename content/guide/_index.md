@@ -12,15 +12,13 @@ extra:
   docs_project_path: '@/home/index.md'
   docs_repository_url: https://github.com/DreamWeave-MP/Starwind-R3mastered/tree/main/content/guide
   docs_sidebar_label: "Game Guide"
-  docs_brand_suffix: "Guide"
   kind: game guide
 ---
-
-# Starwind Definitive Game Guide
-
 Welcome to the **Starwind Definitive** guide. This section turns the current Definitive quest database into a player-facing walkthrough while retaining the exact journal, dialogue, script, item, and cell evidence underneath each page for QA and modding work.
 
-> **Guide status:** This first edition is **record-derived and awaiting full playtest verification**. It is deliberately honest about uncertainty: when the records prove a route, the guide describes it; when a transition is indirect or ambiguous, the page calls that out instead of inventing a solution. During Definitive playtesting, these pages should be edited into the final human-verified walkthrough.
+{% callout(kind="note", title="Guide status") %}
+This first edition is **record-derived and awaiting full playtest verification**. It is deliberately honest about uncertainty: when the records prove a route, the guide describes it; when a transition is indirect or ambiguous, the page calls that out instead of inventing a solution. During Definitive playtesting, these pages should be edited into the final human-verified walkthrough.
+{% end %}
 
 ## Start here
 

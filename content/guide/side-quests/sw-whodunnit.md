@@ -10,7 +10,7 @@ extra:
 ---
 
 
-{% usage_note(title="Guide status") %}
+{% callout(kind="note", title="Guide status") %}
 **Record-derived; awaiting full playtest verification.** The route below is reconstructed from the current Definitive journal, dialogue, scripts, placements and item records. If playtesting proves a different route, update the guide rather than forcing the game to match this draft.
 {% end %}
 
@@ -123,7 +123,9 @@ Speak with **Captain Dunes Birgid** in **Serenno, Military Headquarters** and as
 
 > **Expected journal update — index 30:** Captain Drumgdond was pleased that I solved the crime, and rewarded me appropriately. He then ordered me to take a breather, believing that it must've been tiring to have been running all over the city "chasing ghosts". When I am ready for my next task, I should go and see him.
 
-> **Playtest flag:** 5 journal stages on this page lack a literal setter in the current static scan.
+{% callout(kind="warning", title="Playtest flag") %}
+5 journal stages on this page lack a literal setter in the current static scan.
+{% end %}
 
 ## Known rewards & item transfers
 

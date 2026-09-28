@@ -10,7 +10,7 @@ extra:
 ---
 
 
-{% usage_note(title="Guide status") %}
+{% callout(kind="note", title="Guide status") %}
 **Record-derived; awaiting full playtest verification.** The route below is reconstructed from the current Definitive journal, dialogue, scripts, placements and item records. If playtesting proves a different route, update the guide rather than forcing the game to match this draft.
 {% end %}
 
@@ -252,7 +252,9 @@ Speak with **Captain Shell** in **Manaan, Republic Embassy** and ask about **Ord
 
 > **Expected journal update — index 6000:** I returned to the Captain with the news that our soldier is being banished from Manaan. He says the mission was a lost cause. I was still thanked for my involvement.
 
-> **Playtest flag:** 2 journal stages on this page lack a literal setter in the current static scan.
+{% callout(kind="warning", title="Playtest flag") %}
+2 journal stages on this page lack a literal setter in the current static scan.
+{% end %}
 
 ## Endings & branches
 

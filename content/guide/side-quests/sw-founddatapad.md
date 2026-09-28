@@ -10,7 +10,7 @@ extra:
 ---
 
 
-{% usage_note(title="Guide status") %}
+{% callout(kind="note", title="Guide status") %}
 **Record-derived; awaiting full playtest verification.** The route below is reconstructed from the current Definitive journal, dialogue, scripts, placements and item records. If playtesting proves a different route, update the guide rather than forcing the game to match this draft.
 {% end %}
 
@@ -32,7 +32,9 @@ extra:
 
 > **Expected journal update — index 0:** I found the datapad
 
-> **Playtest flag:** 1 journal stage on this page lack a literal setter in the current static scan.
+{% callout(kind="warning", title="Playtest flag") %}
+1 journal stage on this page lack a literal setter in the current static scan.
+{% end %}
 
 {% technical_details(title="Technical / QA reference") %}
 **Journal ID:** `SW_FoundDatapad`

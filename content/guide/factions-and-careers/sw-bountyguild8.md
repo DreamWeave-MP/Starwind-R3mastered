@@ -10,7 +10,7 @@ extra:
 ---
 
 
-{% usage_note(title="Guide status") %}
+{% callout(kind="note", title="Guide status") %}
 **Record-derived; awaiting full playtest verification.** The route below is reconstructed from the current Definitive journal, dialogue, scripts, placements and item records. If playtesting proves a different route, update the guide rather than forcing the game to match this draft.
 {% end %}
 
@@ -55,7 +55,9 @@ Reach **Nar Shaddaa, Bounty Hunter Office** and allow the scripted event to comp
 
 > **Expected journal update — index 20:** I've received a bounty for a Nautolan who was last spotted flying over Dantooine.
 
-> **Playtest flag:** 3 journal stages on this page lack a literal setter in the current static scan.
+{% callout(kind="warning", title="Playtest flag") %}
+3 journal stages on this page lack a literal setter in the current static scan.
+{% end %}
 
 ## Endings & branches
 
