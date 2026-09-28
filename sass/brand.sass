@@ -1,10 +1,157 @@
-// Your branding. This file is yours: the template never changes it, and it loads last.
-//
-// Recolor everything by overriding tokens, for example:
-//
-// :root
-//   --dw-accent: #7fded0
-//   --dw-font-display: "Oxanium", var(--dw-font-mono)
-//
-// Token names are in sass/_tokens.sass. Prefer tokens over new selectors: they keep the
-// template's components, docs and diagrams consistent with each other.
+// Starwind R3mastered. This file belongs to Starwind: the template never changes it, and it loads
+// last. Everything here is built from the template's tokens (sass/_tokens.sass), so the docs, the
+// game guide and the project page stay one site.
+
+// Space, not parchment: the teal palette pushed toward blue-black, with a holographic cyan.
+[data-palette="teal"]
+  --dw-accent: #7ae0e2
+  --dw-bg-0: #070c11
+  --dw-bg-1: #0b1218
+  --dw-bg-2: #101a22
+  --dw-bg-3: #16242e
+  --dw-line: #1c303b
+  --dw-line-strong: #2a4755
+  --dw-code-bg: #0d161d
+  --dw-code-inline-bg: #142530
+
+::selection
+  background: color-mix(in oklab, var(--dw-accent) 32%, transparent)
+
+// The hero is a view from orbit: pinpoint stars, a nebula at the top, and a planet's lit edge
+// rising in the corner. All of it sits behind the text, which never loses contrast.
+.dw-hero
+  overflow: hidden
+  isolation: isolate
+  background: radial-gradient(ellipse 55% 110% at 82% -20%, color-mix(in oklab, var(--dw-accent) 14%, transparent), transparent 70%), radial-gradient(ellipse 40% 80% at 8% 120%, rgb(110 84 214 / 12%), transparent 70%), linear-gradient(180deg, var(--dw-bg-1), var(--dw-bg-0))
+
+  // Stars: pinpoints on tiles of unrelated sizes, so no pattern repeats where the eye can find it.
+  &::before
+    content: ""
+    position: absolute
+    inset: 0
+    z-index: -2
+    background-image: radial-gradient(circle at 23px 41px, rgb(255 255 255 / 85%) 0 .7px, transparent 1.2px), radial-gradient(circle at 131px 17px, rgb(200 240 255 / 70%) 0 .6px, transparent 1.1px), radial-gradient(circle at 67px 103px, rgb(255 255 255 / 60%) 0 .5px, transparent 1px), radial-gradient(circle at 181px 71px, rgb(160 240 240 / 80%) 0 .9px, transparent 1.5px), radial-gradient(circle at 12px 150px, rgb(255 255 255 / 45%) 0 .5px, transparent 1px), radial-gradient(circle at 240px 190px, rgb(255 240 220 / 70%) 0 .8px, transparent 1.3px)
+    background-size: 173px 131px, 211px 157px, 97px 113px, 263px 199px, 151px 167px, 331px 241px
+    opacity: .75
+    mask-image: linear-gradient(90deg, rgb(0 0 0 / 35%), #000 55%)
+
+  // The planet: most of it below the fold, its atmosphere catching the light.
+  &::after
+    content: ""
+    position: absolute
+    z-index: -1
+    right: -18rem
+    bottom: -52rem
+    width: 60rem
+    aspect-ratio: 1
+    border-radius: 50%
+    background: radial-gradient(circle at 42% 8%, #11232b, #070c11 42%)
+    box-shadow: 0 -2px 0 color-mix(in oklab, var(--dw-accent) 55%, transparent), 0 -18px 60px color-mix(in oklab, var(--dw-accent) 22%, transparent), inset 0 14px 40px color-mix(in oklab, var(--dw-accent) 18%, transparent)
+    pointer-events: none
+
+  @media (max-width: 760px)
+    &::after
+      right: -26rem
+      bottom: -55rem
+      opacity: .7
+
+.dw-hero__title
+  background: linear-gradient(100deg, var(--dw-text) 30%, var(--dw-accent) 95%)
+  background-clip: text
+  -webkit-background-clip: text
+  color: transparent
+  letter-spacing: -.01em
+
+  @media (forced-colors: active)
+    background: none
+    color: CanvasText
+
+// The header's lower edge reads as a hologram's scan line.
+.dw-header
+  border-bottom-color: transparent
+  background-image: linear-gradient(90deg, transparent, color-mix(in oklab, var(--dw-accent) 45%, transparent) 30%, color-mix(in oklab, var(--dw-accent) 45%, transparent) 70%, transparent)
+  background-size: 100% 1px
+  background-position: bottom
+  background-repeat: no-repeat
+
+// Game guide ------------------------------------------------------------------------------
+
+// Quoted journal text, as the game shows it. The label is the page's own: "Expected journal
+// update — index 10".
+.docs-article blockquote
+  border-left: 2px solid var(--dw-accent)
+  border-radius: 0 var(--dw-radius) var(--dw-radius) 0
+  padding: .7em 1.1em
+  background: linear-gradient(90deg, var(--dw-accent-soft), transparent 85%)
+  color: var(--dw-text)
+
+  > p > strong:first-child
+    display: block
+    margin-bottom: .3em
+    color: var(--dw-accent)
+    font-family: var(--dw-font-mono)
+    font-size: .72rem
+    font-weight: 600
+    letter-spacing: .12em
+    text-transform: uppercase
+
+// "At a glance": the row labels.
+.docs-article table td:first-child strong
+  color: var(--dw-accent)
+  font-weight: 600
+
+// {% technical_details() %}: the record-level evidence under every walkthrough, closed until
+// someone doing QA opens it.
+.guide-technical
+  margin: 2.5em 0 1em
+  border: 1px solid var(--dw-line)
+  border-radius: var(--dw-radius)
+  background: var(--dw-bg-1)
+
+  > summary
+    display: flex
+    align-items: baseline
+    gap: .7em
+    padding: .8em 1em
+    color: var(--dw-text-muted)
+    font-family: var(--dw-font-mono)
+    font-size: .78rem
+    letter-spacing: .1em
+    text-transform: uppercase
+    cursor: pointer
+    list-style: none
+
+    &::-webkit-details-marker
+      display: none
+
+    &::before
+      content: "▸"
+      color: var(--dw-accent)
+
+    &:hover
+      color: var(--dw-text)
+
+  &[open] > summary
+    border-bottom: 1px solid var(--dw-line)
+    color: var(--dw-accent)
+
+    &::before
+      content: "▾"
+
+.guide-technical__body
+  padding: 1.1em 1.2em .4em
+
+  // Journal id, category and entry count: one fact per line, as they are written.
+  > p:first-child
+    white-space: pre-line
+    color: var(--dw-text-muted)
+
+  h3
+    margin-top: 1.6em
+    font-size: 1.05rem
+
+  h3:first-of-type
+    margin-top: .6em
+
+  pre
+    max-width: 100%
