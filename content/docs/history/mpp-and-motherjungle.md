@@ -3,9 +3,6 @@ title: "2023: MPP and motherJungle"
 weight: 30
 description: The merged-plugin effort moves from editor-maintained artifacts to reproducible builds, dialogue repair, decoupling, and TES3 analysis tooling.
 ---
-
-# 2023: MPP and motherJungle
-
 The Merged Plugin Project is the point where Starwind integration stops being
 only a thing that exists and starts becoming a thing that can be **rebuilt**.
 

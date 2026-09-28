@@ -3,9 +3,6 @@ title: "2023: StarwindServer and TSI"
 weight: 20
 description: "The earliest preserved engineering repository in the R3mastered lineage: persistent-world fixes, generated databases, and a manually integrated Starwind build."
 ---
-
-# 2023: StarwindServer and TSI
-
 The earliest preserved Starwind **engineering** repository in the R3mastered
 lineage is not motherJungle. It is the private `StarwindServer` repository used
 by Rickoff and Dave for TSI.

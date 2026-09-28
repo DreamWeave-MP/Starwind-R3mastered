@@ -10,13 +10,10 @@ extra:
   docs_project_name: "Starwind: R3mastered"
   docs_short_title: R3mastered Docs
   docs_project_path: '@/home/index.md'
-  docs_repository_url: https://github.com/DreamWeave-MP/Starwind-R3mastered/tree/V4/content/docs
+  docs_repository_url: https://github.com/DreamWeave-MP/Starwind-R3mastered/tree/main/content/docs
   docs_sidebar_label: Documentation
   kind: guide
 ---
-
-# R3mastered Documentation
-
 This is the durable documentation root for **Starwind: R3mastered**.
 
 R3mastered is being assembled from several years of Starwind integration,

@@ -9,9 +9,6 @@ weight: 10
 extra:
   kind: guide
 ---
-
-# Project History
-
 **Starwind: R3mastered did not begin in 2026.** The repository did.
 
 The project inherits several distinct engineering lineages that grew around

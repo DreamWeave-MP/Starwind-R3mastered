@@ -3,9 +3,6 @@ title: "2025: the SW4 Modernization Burst"
 weight: 70
 description: "The May 2025 Starwind-Builder skunkworks explosion: freighters, mounts, automatic blasters, record migration, KOTOR-style controls, targeting, and UI."
 ---
-
-# 2025: the SW4 Modernization Burst
-
 In May 2025 Starwind-Builder stops looking like only a patch/build repository
 and, for roughly two weeks, turns into a concentrated gameplay R&D lab.
 

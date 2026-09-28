@@ -3,9 +3,6 @@ title: The St4sh as Skunkworks
 weight: 60
 description: How S3ctor's S3cret St4sh grew from release infrastructure into a Starwind experimentation space and hosted the first surviving Lua freighter rewrite.
 ---
-
-# The St4sh as Skunkworks
-
 S3ctor's S3cret St4sh eventually became both a publishing system and an
 experimentation space for Starwind/TSI work. Its Git history needs careful
 reading because the repository inherited older template ancestry.

@@ -3,9 +3,6 @@ title: "2024: Makron, Builder, and Naboo"
 weight: 50
 description: Starwind integration becomes a reproducible CI/deployment forge, moves into Modding-OpenMW, and absorbs TSI-first content such as Naboo.
 ---
-
-# 2024: Makron, Builder, and Naboo
-
 March 2024 is the point where the motherJungle idea becomes infrastructure.
 Two repositories are born within hours of one another: **Makron**, the build
 environment, and **Starwind-Builder**, the project-specific forge.

@@ -3,9 +3,6 @@ title: DreamWeave Migration and DreamScripts
 weight: 90
 description: The 2025 GitLab-to-GitHub migration and the 2026 server-script rearchitecture that reconnects to Rickoff-era TSI fixes.
 ---
-
-# DreamWeave Migration and DreamScripts
-
 By late 2025, the Starwind infrastructure that had lived under Modding-OpenMW's
 GitLab namespace moves into DreamWeave's GitHub organization. In 2026 a second
 lineage—TES3MP server scripting—also gets a modernization pass.

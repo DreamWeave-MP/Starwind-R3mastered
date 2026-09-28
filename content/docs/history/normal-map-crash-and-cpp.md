@@ -3,9 +3,6 @@ title: The Normal-Map Crash and CPP
 weight: 40
 description: How a Starwind mesh/OpenMW failure became an upstream engine report, a TES3MP compatibility fix, and eventually the Community Patch Project.
 ---
-
-# The Normal-Map Crash and CPP
-
 The Community Patch Project is not just a bag of Starwind fixes. Its origin is
 a particularly useful example of the feedback loop between **TSI testing,
 Starwind content, OpenMW engine behavior, and public single-player fixes**.

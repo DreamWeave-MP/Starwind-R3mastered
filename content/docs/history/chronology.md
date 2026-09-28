@@ -3,9 +3,6 @@ title: Chronology
 weight: 110
 description: Dense date-indexed chronology with commit receipts and source classification.
 ---
-
-# Chronology
-
 This page is the compact audit index. The narrative pages explain significance;
 this table is for answering **"what exactly happened when?"**
 

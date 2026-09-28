@@ -3,9 +3,6 @@ title: "2026: MPP Becomes R3mastered"
 weight: 100
 description: The old merge project reaches master decoupling and dialogue reconstruction, then converges with CPP, asset work, and Lua modernization under a new repository.
 ---
-
-# 2026: MPP Becomes R3mastered
-
 By September 2026 the phrase "Merged Plugin Project" no longer describes the
 scope of the work very well.
 

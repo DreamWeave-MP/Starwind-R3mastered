@@ -3,9 +3,6 @@ title: Evidence Policy & Terminology
 weight: 10
 description: How this history distinguishes public Git evidence, private sources, artifacts, oral history, and interpretation.
 ---
-
-# Evidence Policy & Terminology
-
 The purpose of this history is not merely to tell a good story. It is to make
 that story **auditable**.
 

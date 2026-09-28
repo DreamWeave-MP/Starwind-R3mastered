@@ -3,9 +3,6 @@ title: Source Ledger
 weight: 120
 description: Repository, issue, release, mod, artifact, and oral-history sources used by the R3mastered historical record.
 ---
-
-# Source Ledger
-
 This is the source registry for the historical section. The goal is to make it
 obvious which statements can be checked on the public web, which require a
 preserved repository bundle, and which come from participant recollection.

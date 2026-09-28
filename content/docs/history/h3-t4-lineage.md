@@ -3,9 +3,6 @@ title: H3, T4, and the Systems That Escaped
 weight: 80
 description: The nuanced lineage between SW4, s3lf/H3, CHIM helpers, and the later standalone T4rg3t5 targeting project.
 ---
-
-# H3, T4, and the Systems That Escaped
-
 The easiest way to get this part of the history wrong is to draw a clean arrow
 from `SW4` to `H3` and call it done.
 
