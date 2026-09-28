@@ -2,6 +2,7 @@
 
 {% block docs_content %}
     {{ section.content | safe }}
+    {#- A section whose body already links its pages sets extra.hide_child_cards = true. -#}
     {% set hide_child_cards = section.extra.hide_child_cards | default(value=false) %}
     {% if (section.pages or section.subsections) and not hide_child_cards %}
     <div class="docs-section-links">

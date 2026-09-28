@@ -1,0 +1,32 @@
+# Starwind R3mastered. Structured facts only: the name and summary are `title` and
+# `description` in index.md. Every key is explained at
+# https://dreamweave-mp.github.io/DreamWeave-Mod-Template/guide/mod-toml/
+
+# Permanent identity. Never changes, whatever the project is called or wherever it is hosted.
+id = "0e7eb278-83f7-48e6-b938-25d306e84c41"
+
+# Archive name and release-tag prefix: starwind_r3mastered.zip, tagged starwind_r3mastered-<version>.
+slug = "starwind_r3mastered"
+type = "total-conversion"
+status = "experimental"
+
+[[maintainers]]
+name = "DreamWeave"
+url = "https://github.com/DreamWeave-MP"
+
+[links]
+documentation = "@/docs/_index.md"
+support = "https://github.com/DreamWeave-MP/Starwind-R3mastered/discussions"
+
+# Nothing ships yet: until the first content lands in content/home, there is no development build
+# to publish. Turn it back on then, and add [runtimes] and the content files.
+[package]
+development = false
+
+[[credits]]
+name = "DreamWeave and TSI contributors"
+role = "R3mastered"
+
+[[credits]]
+name = "The TSI community"
+role = "Years of support"

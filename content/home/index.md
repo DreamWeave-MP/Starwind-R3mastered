@@ -1,7 +1,6 @@
 ---
 title: "Starwind: R3mastered"
 description: A modern, auditable OpenMW reconstruction and continuation of Starwind.
-date: 2026-09-14
 
 taxonomies:
   tags:
@@ -10,9 +9,8 @@ taxonomies:
     - Total Conversion
 
 extra:
-  hide_download_bar: true
-  use_toc: false
-  version: "0.0.0-dev"
+  # Nothing to install yet, so no install, compatibility or release sections.
+  sections: [overview, credits]
 ---
 
 **Starwind: R3mastered** is the new home for the long-running effort to turn
@@ -37,6 +35,9 @@ and dialogue reconstruction, content integration, asset modernization, and the
 resurrection/rewrite of useful Starwind OpenMW-Lua systems discovered in the
 old skunkworks trees.
 
-The **Game Guide** is now a dedicated player-facing section with record-backed walkthroughs for the Definitive quest corpus. Developer documentation, architecture references, and project APIs remain under `/docs/`. History stays separate so implementation documentation can evolve without erasing why the project made its decisions.
+The **Game Guide** is a dedicated player-facing section with record-backed walkthroughs for the
+Definitive quest corpus. Developer documentation, architecture references and project APIs live
+under the [documentation](@/docs/_index.md). History stays separate, so implementation documentation
+can evolve without erasing why the project made its decisions.
 
-{{ credits(default=true) }}
+If you're reading this, thank you. This is an aspirational project, but I know we can do it - together.
