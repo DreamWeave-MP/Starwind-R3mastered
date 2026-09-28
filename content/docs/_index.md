@@ -25,9 +25,7 @@ and tooling. The documentation is therefore organized as a long-lived project
 reference rather than as a release README.
 
 At project inception, the first populated category is **[Project history](./history/)**.
-Future user guides, developer references, build documentation, and public APIs
-should live beside it as separate documentation categories instead of being
-folded into the historical record.
+The player-facing **[Starwind Definitive Game Guide](@/guide/_index.md)** now lives in its own navigable site section. Developer references, build documentation, architecture material, and public APIs belong here beside the historical record rather than being folded into it.
 
 ## Documentation policy
 

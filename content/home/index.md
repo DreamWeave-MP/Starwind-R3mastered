@@ -24,6 +24,7 @@ The repository is new. The work behind it is not.
 The first major documentation pass preserves the engineering history before we
 build more on top of it:
 
+- **[Starwind Definitive Game Guide](@/guide/_index.md)**
 - **[R3mastered Documentation](@/docs/_index.md)**
 - **[Project History](@/docs/history/_index.md)**
 - **[Chronology](@/docs/history/chronology.md)**
@@ -36,9 +37,6 @@ and dialogue reconstruction, content integration, asset modernization, and the
 resurrection/rewrite of useful Starwind OpenMW-Lua systems discovered in the
 old skunkworks trees.
 
-Long-term user guides, developer documentation, architecture references, and
-public APIs will live under the same `/docs/` hierarchy. History is kept as its
-own category so implementation documentation can evolve without erasing why
-the project made its decisions.
+The **Game Guide** is now a dedicated player-facing section with record-backed walkthroughs for the Definitive quest corpus. Developer documentation, architecture references, and project APIs remain under `/docs/`. History stays separate so implementation documentation can evolve without erasing why the project made its decisions.
 
 {{ credits(default=true) }}

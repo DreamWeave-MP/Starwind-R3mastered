@@ -68,6 +68,7 @@ logo_text = "Starwind R3mastered"
 # relative to your site url.
 menu_items = [
     {name = "Home", url = "$BASE_URL/home"},
+    {name = "Guide", url = "$BASE_URL/guide"},
     {name = "Docs", url = "$BASE_URL/docs"},
     {name = "History", url = "$BASE_URL/docs/history"},
     {name = "GitHub", url = "https://github.com/DreamWeave-MP/Starwind-R3mastered"},

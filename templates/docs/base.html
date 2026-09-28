@@ -38,6 +38,7 @@
     {% set_global docs_project_path = "@/_index.md" %}
     {% set_global docs_repository_url = false %}
     {% set_global docs_sidebar_label = "Documentation" %}
+    {% set_global docs_brand_suffix = "Docs" %}
     {% if docs_root %}
         {% set_global docs_root_url = docs_root.permalink %}
         {% set_global docs_project_name = docs_root.extra.docs_project_name | default(value=docs_root.title) %}
@@ -45,6 +46,7 @@
         {% set_global docs_project_path = docs_root.extra.docs_project_path | default(value="@/_index.md") %}
         {% set_global docs_repository_url = docs_root.extra.docs_repository_url | default(value=false) %}
         {% set_global docs_sidebar_label = docs_root.extra.docs_sidebar_label | default(value="Documentation") %}
+        {% set_global docs_brand_suffix = docs_root.extra.docs_brand_suffix | default(value="Docs") %}
     {% endif %}
     {% if docs_root and docs_root.extra.docs_project_path | default(value=false) %}
         {% set_global docs_project_url = get_url(path=docs_project_path) %}
@@ -65,7 +67,7 @@
 <header class="docs-header">
     <div class="docs-header__inner">
         <a class="docs-brand" href="{{ docs_root_url | safe }}">
-            <strong>{{ docs_project_name }}</strong><span>Docs</span>
+            <strong>{{ docs_project_name }}</strong><span>{{ docs_brand_suffix }}</span>
         </a>
         {% if config.build_search_index %}
         <div class="search-container docs-search">

@@ -495,3 +495,35 @@
 
   .docs-footer
     margin-bottom: 1em
+
+// Game guide additions
+.guide-technical
+  margin: 2.5em 0
+  border: 1px solid var(--accent-alpha-70)
+  border-radius: .3em
+  background: var(--accent-alpha-20)
+
+  > summary
+    padding: .9em 1em
+    color: var(--accent)
+    font-weight: bold
+    cursor: pointer
+
+  &[open] > summary
+    border-bottom: 1px solid var(--accent-alpha-70)
+
+.guide-technical__body
+  padding: 0 1em 1em
+  background: var(--background)
+
+  > :first-child
+    margin-top: 1em
+
+  pre
+    max-width: 100%
+
+.docs-article blockquote
+  border-left-color: var(--accent)
+
+.docs-article table td:first-child strong
+  color: var(--accent)
