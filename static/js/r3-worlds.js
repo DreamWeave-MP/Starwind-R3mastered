@@ -151,6 +151,23 @@ export function pickWorld() {
     ringBands: random() * 100,
     moonCount: Math.floor(random() * (base.moons + 1)),
     moonSeeds: [random(), random(), random(), random(), random(), random()],
+    // Where round the limb the sun rises, and how far the planet has turned when the visit begins.
+    sunAt: random(),
+    phase: random() * Math.PI * 2,
+    // The sky behind: where its three clouds sit, as fractions of the hero's width and height, how
+    // far each spreads and how bright it is, a shift in the violet's hue, and the noise's offset,
+    // scale and warp.
+    sky: {
+      cyan: [random() * 1.1, 0.7 + 0.55 * random()],
+      violet: [random() * 1.1, -0.35 + 0.6 * random()],
+      third: [random(), random()],
+      spread: [0.45 + 0.5 * random(), 0.4 + 0.5 * random(), 0.3 + 0.45 * random()],
+      strength: [0.5 + 0.9 * random(), 0.4 + 0.9 * random(), random() < 0.5 ? 0.3 + 0.9 * random() : 0],
+      hue: (random() - 0.5) * 0.12,
+      offset: [random() * 40 - 20, random() * 40 - 20],
+      scale: 0.75 + 0.6 * random(),
+      warp: 1.1 + 1.4 * random(),
+    },
     // The camera: how the planet is framed on this load (see layout() in r3-hero.js).
     frame: { kind: pickFrame(random()), size: random(), at: random(), lift: random(), sun: random() },
   };

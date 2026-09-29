@@ -138,23 +138,39 @@ const NEBULA_FRAGMENT = /* glsl */ `
   uniform vec3 uBottom;
   uniform vec3 uCyan;
   uniform vec3 uViolet;
+  uniform vec3 uThird;       // a third cloud, in the colour of the world's air
+  // This visit's sky (r3-worlds.js): where each cloud sits, as fractions of the hero's width and
+  // height, how far it spreads and how bright it is, the noise's offset, scale and warp.
+  uniform vec4 uCloudsAt;    // cyan x, y, violet x, y
+  uniform vec2 uThirdAt;
+  uniform vec3 uSpread;
+  uniform vec3 uStrength;
+  uniform vec4 uNoise;       // offset x, y, scale, warp
   ${NOISE}
+  float cloudMask(vec2 p, vec2 at, float spread) {
+    vec2 d = (p - vec2(at.x * uAspect, at.y)) / spread;
+    return exp(-dot(d, d) * 3.0);
+  }
   void main() {
     vec2 p = vec2(vUv.x * uAspect, vUv.y) + uDrift * 0.35 + uScroll * (0.35 / max(uHeight, 1.0));
     vec3 col = mix(uBottom, uTop, smoothstep(0.0, 1.0, vUv.y));
-    vec2 warp = vec2(fbm2(p * 1.4 + vec2(0.0, uTime * 0.011)), fbm2(p * 1.4 + vec2(5.2, 1.3) - uTime * 0.009));
-    float cloud = fbm2(p * 1.9 + warp * 1.7 + uTime * 0.006);
-    float ridge = 1.0 - abs(2.0 * fbm2(p * 3.3 + warp * 2.2 - uTime * 0.004) - 1.0);
+    vec2 n = p * uNoise.z + uNoise.xy;
+    vec2 warp = vec2(fbm2(n * 1.4 + vec2(0.0, uTime * 0.011)), fbm2(n * 1.4 + vec2(5.2, 1.3) - uTime * 0.009));
+    float cloud = fbm2(n * 1.9 + warp * uNoise.w + uTime * 0.006);
+    float wisp = fbm2(n * 2.7 - warp * uNoise.w * 1.3 + vec2(3.1, 7.7));
+    float ridge = 1.0 - abs(2.0 * fbm2(n * 3.3 + warp * 2.2 - uTime * 0.004) - 1.0);
     ridge = clamp(ridge, 0.0, 1.0);
 
-    vec2 dc = (p - vec2(uAspect * 0.86, 1.12)) * vec2(0.7, 1.15);
-    float cyanMask = exp(-dot(dc, dc) * 3.2);
-    vec2 dv = (p - vec2(uAspect * 0.02, -0.2)) * vec2(0.9, 1.25);
-    float violetMask = exp(-dot(dv, dv) * 3.0);
+    float cyanMask = cloudMask(p, uCloudsAt.xy, uSpread.x);
+    float violetMask = cloudMask(p, uCloudsAt.zw, uSpread.y);
+    float thirdMask = cloudMask(p, uThirdAt, uSpread.z);
 
-    col += uCyan * cyanMask * (0.025 + 0.075 * smoothstep(0.4, 0.85, cloud));
-    col += uCyan * cyanMask * pow(ridge, 8.0) * 0.05;
-    col += uViolet * violetMask * (0.03 + 0.07 * smoothstep(0.45, 0.9, cloud));
+    col += uCyan * cyanMask * (0.025 + 0.075 * smoothstep(0.4, 0.85, cloud)) * uStrength.x;
+    col += uCyan * cyanMask * pow(ridge, 8.0) * 0.05 * uStrength.x;
+    col += uViolet * violetMask * (0.03 + 0.07 * smoothstep(0.45, 0.9, cloud)) * uStrength.y;
+    col += uThird * thirdMask * (0.02 + 0.06 * smoothstep(0.5, 0.9, wisp)) * uStrength.z;
+    // Dark lanes of dust across the brightest cloud.
+    col *= 1.0 - 0.35 * smoothstep(0.55, 0.8, wisp) * cyanMask * uStrength.x;
     gl_FragColor = vec4(col, 1.0);
   }
 `;
@@ -875,7 +891,13 @@ function start(hero, art) {
     uTop: { value: top },
     uBottom: { value: bottom },
     uCyan: { value: accent },
-    uViolet: { value: violet },
+    uViolet: { value: violet.clone().offsetHSL(world.sky.hue, 0, 0) },
+    uThird: { value: worldColor(world.air).multiplyScalar(0.8) },
+    uCloudsAt: { value: new THREE.Vector4(...world.sky.cyan, ...world.sky.violet) },
+    uThirdAt: { value: new THREE.Vector2(...world.sky.third) },
+    uSpread: { value: new THREE.Vector3(...world.sky.spread) },
+    uStrength: { value: new THREE.Vector3(...world.sky.strength) },
+    uNoise: { value: new THREE.Vector4(...world.sky.offset, world.sky.scale, world.sky.warp) },
   });
   const skyUniforms = {
     tNebula: { value: nebulaTarget.texture },
@@ -998,7 +1020,7 @@ function start(hero, art) {
   const alignAxis = new THREE.Matrix4().makeRotationFromQuaternion(new THREE.Quaternion().setFromUnitVectors(worldAxis, new THREE.Vector3(0, 1, 0)));
   const spinMatrix = new THREE.Matrix4();
   const planet = { x: 0, y: 0, radius: 1 };
-  let sunAlong = 0;
+  let sunAngle = 0;
   const anchor = new THREE.Vector3();
   let jewelScale = 1;
 
@@ -1046,7 +1068,6 @@ function start(hero, art) {
       planet.radius = Math.max(width * 1.05, 420);
       planet.x = width * 0.62;
       planet.y = -planet.radius + height * 0.15;
-      sunAlong = THREE.MathUtils.clamp((width * 0.97 - planet.x) / planet.radius, -0.7, 0.7);
     } else {
       // The framing picked for this load (r3-worlds.js). Every one keeps the disc clear of the
       // text: where it reaches the hero's foot, it does so right of the text column.
@@ -1058,27 +1079,35 @@ function start(hero, art) {
         const reach = planet.x - (textRight + 60);
         const highest = reach < planet.radius ? planet.radius - Math.sqrt(planet.radius * planet.radius - reach * reach) : height;
         crown = Math.min(height * (0.55 + 0.3 * frame.lift), highest);
-        sunAlong = -0.25 - 0.35 * frame.sun;
       } else if (frame.kind === 'distant') {
         planet.radius = Math.max(width * 0.17, 230) * (0.85 + 0.35 * frame.size);
         planet.x = Math.max(textRight + planet.radius + 50, textRight + free * (0.5 + 0.15 * frame.at));
         crown = Math.min(height * (0.55 + 0.2 * frame.lift), height - 40);
-        sunAlong = 0.2 + 0.35 * frame.sun;
       } else if (frame.kind === 'close') {
         planet.radius = Math.max(width * 0.9, 1100) * (0.9 + 0.3 * frame.size);
         planet.x = textRight + free * (0.45 + 0.2 * frame.at);
         const reach = planet.x - (textRight + 60);
         crown = Math.min(height * (0.22 + 0.12 * frame.lift), planet.radius - Math.sqrt(Math.max(0, planet.radius * planet.radius - reach * reach)));
-        sunAlong = THREE.MathUtils.clamp((Math.min(width - 90, planet.x + free * 0.3) - planet.x) / planet.radius, -0.8, 0.8);
       } else {
         planet.radius = Math.max(width * 0.36, 480) * (0.85 + 0.3 * frame.size);
         planet.x = textRight + free * (0.42 + 0.2 * frame.at);
         crown = height * (0.24 + 0.12 * frame.lift);
-        sunAlong = THREE.MathUtils.clamp((Math.min(width - 90, planet.x + planet.radius * 0.38) - planet.x) / planet.radius, -0.8, 0.8);
       }
       planet.y = -planet.radius + Math.max(crown, 40);
     }
     skyUniforms.uPlanet.value.set(planet.x * ratio, planet.y * ratio, planet.radius * ratio);
+    // The sun rises at a point round the limb picked for this visit (r3-worlds.js): anywhere the
+    // limb is in view, clear of the text and the hero's edges.
+    const candidates = [];
+    for (let degree = 0; degree < 360; degree += 2) {
+      const angle = (degree * Math.PI) / 180;
+      const x = planet.x + Math.sin(angle) * planet.radius;
+      const y = height - (planet.y + Math.cos(angle) * planet.radius);
+      if (x < 40 || x > width - 40 || y < 30 || y > height - 16) continue;
+      if (text && x > text.left - bounds.left - 60 && x < text.right - bounds.left + 60 && y > text.top - bounds.top - 50 && y < text.bottom - bounds.top + 50) continue;
+      candidates.push(angle);
+    }
+    sunAngle = candidates.length ? candidates[Math.floor(world.sunAt * candidates.length) % candidates.length] : 0;
     // Small moons in the free sky above the planet, clear of the text.
     const skyLeft = narrow ? width * 0.55 : Math.max(textRight + 60, width * 0.5);
     [skyUniforms.uMoonA.value, skyUniforms.uMoonB.value].forEach((moonValue, i) => {
@@ -1288,8 +1317,8 @@ function start(hero, art) {
 
     // The sun rises and sinks on the limb over about ninety seconds: a diamond ring at its lowest.
     const rise = 0.5 + 0.5 * Math.sin(t * 0.07 - 0.6);
-    const alongX = sunAlong + 0.03 * Math.sin(t * 0.021);
-    const along = new THREE.Vector2(alongX, Math.sqrt(Math.max(0.05, 1 - alongX * alongX))).normalize();
+    const sunAt = sunAngle + 0.025 * Math.sin(t * 0.021);
+    const along = new THREE.Vector2(Math.sin(sunAt), Math.cos(sunAt));
     sunDir.value.set(along.x * 0.55, along.y * 0.55, -(0.84 - 0.1 * rise)).normalize();
     // The planet turns about an axis leaning toward the viewer, so the surface rolls along the arc
     // out of the night and into the sunrise: once in about three and a half minutes, some fifteen
@@ -1308,10 +1337,10 @@ function start(hero, art) {
       }
     }
     dragInverse.makeRotationFromQuaternion(turned).invert();
-    spinMatrix.makeRotationY(t * PLANET_SPIN * world.spin).multiply(alignAxis).multiply(dragInverse);
+    spinMatrix.makeRotationY(t * PLANET_SPIN * world.spin + world.phase).multiply(alignAxis).multiply(dragInverse);
     skyUniforms.uBody.value.setFromMatrix4(spinMatrix);
     skyUniforms.uRingNormal.value.copy(ringNormal).applyQuaternion(turned);
-    spinMatrix.makeRotationY(t * PLANET_SPIN * world.spin * 1.35 + 0.8).multiply(alignAxis).multiply(dragInverse);
+    spinMatrix.makeRotationY(t * PLANET_SPIN * world.spin * 1.35 + world.phase * 1.7 + 0.8).multiply(alignAxis).multiply(dragInverse);
     skyUniforms.uCloudBody.value.setFromMatrix4(spinMatrix);
     const lift = planet.radius * (1.0 + 0.004 + 0.02 * rise);
     const sunX = planet.x - drift.value.x * 26 + along.x * lift;
