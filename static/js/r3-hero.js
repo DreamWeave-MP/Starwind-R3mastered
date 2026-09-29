@@ -117,13 +117,15 @@ const NEBULA_FRAGMENT = /* glsl */ `
   uniform float uTime;
   uniform float uAspect;
   uniform vec2 uDrift;
+  uniform vec2 uScroll;      // the orbit's drift, css pixels, far layer
+  uniform float uHeight;     // the hero's height, css pixels
   uniform vec3 uTop;
   uniform vec3 uBottom;
   uniform vec3 uCyan;
   uniform vec3 uViolet;
   ${NOISE}
   void main() {
-    vec2 p = vec2(vUv.x * uAspect, vUv.y) + uDrift * 0.35;
+    vec2 p = vec2(vUv.x * uAspect, vUv.y) + uDrift * 0.35 + uScroll * (0.35 / max(uHeight, 1.0));
     vec3 col = mix(uBottom, uTop, smoothstep(0.0, 1.0, vUv.y));
     vec2 warp = vec2(fbm2(p * 1.4 + vec2(0.0, uTime * 0.011)), fbm2(p * 1.4 + vec2(5.2, 1.3) - uTime * 0.009));
     float cloud = fbm2(p * 1.9 + warp * 1.7 + uTime * 0.006);
@@ -150,6 +152,7 @@ const SKY_FRAGMENT = /* glsl */ `
   uniform float uTime;
   uniform float uRatio;
   uniform vec2 uDrift;
+  uniform vec2 uScroll;      // the orbit's drift, css pixels, far layer
   uniform vec3 uPlanet;      // centre x, y and radius, in device pixels
   uniform vec3 uSunDir;      // towards the sun, view space: x right, y up, z to the viewer
   uniform vec3 uSunColor;
@@ -214,10 +217,11 @@ const SKY_FRAGMENT = /* glsl */ `
 
     float onPlanet = 1.0 - smoothstep(1.0 - 1.5 / radius, 1.0 + 0.5 / radius, r);
 
-    // Stars, hidden behind the planet.
-    vec3 stars = starLayer(css + uDrift * 8.0, 61.0, 1.0, 0.0)
-               + starLayer(css + uDrift * 16.0, 97.0, 2.0, 0.0) * 0.8
-               + starLayer(css + uDrift * 30.0, 173.0, 3.0, 1.0);
+    // Stars, hidden behind the planet. The camera is in orbit, so they stream past, the nearer
+    // layers faster than the far ones.
+    vec3 stars = starLayer(css + uDrift * 8.0 + uScroll, 61.0, 1.0, 0.0)
+               + starLayer(css + uDrift * 16.0 + uScroll * 1.9, 97.0, 2.0, 0.0) * 0.8
+               + starLayer(css + uDrift * 30.0 + uScroll * 3.4, 173.0, 3.0, 1.0);
     col += stars * (1.0 - onPlanet);
 
     if (r < 1.0 + airHeight * 5.0) {
@@ -606,11 +610,14 @@ function start(hero, art) {
 
   const time = { value: reduceMotion ? 24 : 0 };
   const drift = { value: new THREE.Vector2() };
+  const scroll = { value: new THREE.Vector2() };
   const sunDir = { value: new THREE.Vector3(0.3, 0.6, -0.7).normalize() };
   const nebulaMaterial = fullscreenMaterial(NEBULA_FRAGMENT, {
     uTime: time,
     uAspect: { value: 1 },
     uDrift: drift,
+    uScroll: scroll,
+    uHeight: { value: 1 },
     uTop: { value: top },
     uBottom: { value: bottom },
     uCyan: { value: accent },
@@ -621,6 +628,7 @@ function start(hero, art) {
     uTime: time,
     uRatio: { value: 1 },
     uDrift: drift,
+    uScroll: scroll,
     uPlanet: { value: new THREE.Vector3(0, 0, 100) },
     uSunDir: sunDir,
     uSunColor: { value: sunColor },
@@ -728,6 +736,7 @@ function start(hero, art) {
     camera.aspect = width / height;
     camera.updateProjectionMatrix();
     nebulaMaterial.uniforms.uAspect.value = width / height;
+    nebulaMaterial.uniforms.uHeight.value = height;
     skyUniforms.uRatio.value = ratio;
     compositeUniforms.uRatio.value = ratio;
     compositeUniforms.uResolution.value.set(w, h);
@@ -860,6 +869,9 @@ function start(hero, art) {
     presence += (wanted - presence) * (reduceMotion ? 1 : Math.min(1, dt * 3));
     jewelUniforms.uPresence.value = presence;
     drift.value.set(eased.x * 0.5, eased.y * 0.35);
+    // The orbit: the sky streams to the left and a little down, the far stars at six pixels a
+    // second. It wraps at a large period so the numbers stay small.
+    scroll.value.set((t * 6.0) % 100000, (t * 1.1) % 100000);
 
     // The sun rises and sinks on the limb over about ninety seconds: a diamond ring at its lowest.
     const rise = 0.5 + 0.5 * Math.sin(t * 0.07 - 0.6);
