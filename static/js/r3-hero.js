@@ -28,6 +28,7 @@
 
 import * as THREE from './vendor/three.module.min.js';
 import { pickWorld } from './r3-worlds.js';
+import { createFleet } from './r3-ships.js';
 
 const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -489,6 +490,9 @@ const COMPOSITE_FRAGMENT = /* glsl */ `
   uniform float uGlint;
   uniform vec4 uText;        // the text's box in uv: left, bottom, right, top
   uniform vec3 uPlanetPx;    // the planet's centre and radius, device pixels
+  uniform vec2 uFlashPx;     // a ship's hyperspace flash, device pixels
+  uniform float uFlash;
+  uniform float uFlashSize;
   varying vec2 vUv;
   ${SCRUB}
   vec3 aces(vec3 x) {
@@ -525,6 +529,12 @@ const COMPOSITE_FRAGMENT = /* glsl */ `
     vec3 second = fourPoint(d2, 30.0, 0.9, 3.0);
     vec3 secondWide = fourPoint(d2, 14.0, 3.0, 14.0);
     color += vec3(1.0, 0.78, 0.55) * (second.x * 0.8 + second.y * 1.4 + secondWide.y * 0.25) * uSun2Show * (1.0 - 0.65 * overPlanet);
+
+    // A ship entering or leaving hyperspace: a hard white star, a halo and a ring blown outward.
+    vec2 fd = (gl_FragCoord.xy - uFlashPx) / (uRatio * max(uFlashSize, 0.1));
+    vec3 hyper = fourPoint(fd, 90.0, 1.2, 8.0);
+    float blast = exp(-pow(abs(length(fd) - 30.0 * (1.5 - uFlash)) / 3.5, 2.0));
+    color += vec3(0.75, 0.9, 1.0) * (hyper.x * 1.6 + hyper.y * 3.0 + blast * 0.5) * uFlash;
 
     vec2 g = (gl_FragCoord.xy - uGlintPx) / uRatio;
     vec3 glint = fourPoint(g, 38.0, 0.9, 3.0);
@@ -735,6 +745,7 @@ function start(hero, art) {
     side: THREE.DoubleSide,
   }));
   pivot.add(jewel);
+  const fleet = createFleet({ scene, camera, time, sunDir, sunColor, air, accent, reduceMotion, overlay: art || hero });
 
   const brightMaterial = fullscreenMaterial(BRIGHT_FRAGMENT, { tInput: { value: sceneTarget.texture }, uThreshold: { value: 1.1 } });
   const blurMaterial = fullscreenMaterial(BLUR_FRAGMENT, { tInput: { value: null }, uDirection: { value: new THREE.Vector2() } });
@@ -760,6 +771,9 @@ function start(hero, art) {
     uGlint: { value: 0 },
     uText: { value: new THREE.Vector4(-2, -2, -2, -2) },
     uPlanetPx: { value: new THREE.Vector3(0, 0, 1) },
+    uFlashPx: { value: new THREE.Vector2(-1e4, -1e4) },
+    uFlash: { value: 0 },
+    uFlashSize: { value: 1 },
   };
   const compositeMaterial = fullscreenMaterial(COMPOSITE_FRAGMENT, compositeUniforms);
   function blur(source, via, target, radius) {
@@ -845,6 +859,7 @@ function start(hero, art) {
       );
     }
 
+    fleet.layout({ width, height, free: textRight, narrow, ratio });
     const perPixel = (2 * camera.position.z * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))) / height;
     jewelScale = jewelPx.radius * perPixel;
     anchor.set((jewelPx.x - width / 2) * perPixel, (height / 2 - jewelPx.y) * perPixel, 0);
@@ -1114,6 +1129,12 @@ function start(hero, art) {
     tipWorld.set(Math.cos(tipAngle), Math.sin(tipAngle), 0.02).applyMatrix4(jewel.matrixWorld).project(camera);
     compositeUniforms.uGlintPx.value.set((tipWorld.x * 0.5 + 0.5) * width * ratio, (tipWorld.y * 0.5 + 0.5) * height * ratio);
     compositeUniforms.uGlint.value = Math.max(glint, sparkle * 0.8) * (narrow ? 0.6 : 1);
+
+    // The ships, and any hyperspace flash they make.
+    const shipFlash = fleet.update(reduceMotion ? 0 : dt);
+    compositeUniforms.uFlashPx.value.set(shipFlash.x * ratio, (height - shipFlash.y) * ratio);
+    compositeUniforms.uFlash.value = shipFlash.strength;
+    compositeUniforms.uFlashSize.value = shipFlash.size * (narrow ? 0.6 : 1);
 
     // Render: the nebulae every third frame, then the sky, the jewel, the bloom and the composite.
     nebulaAge++;

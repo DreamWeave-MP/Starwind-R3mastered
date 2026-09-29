@@ -125,6 +125,37 @@
   @media (max-width: 600px)
     display: none
 
+// The destroyer's contact brackets, which static/js/r3-ships.js moves with it: four corners and a
+// class readout, like a target on a scope.
+.r3-contact
+  position: absolute
+  top: 0
+  left: 0
+  color: color-mix(in oklab, var(--dw-accent) 80%, transparent)
+  background: linear-gradient(currentColor 0 0) 0 0 / 12px 1px, linear-gradient(currentColor 0 0) 0 0 / 1px 12px, linear-gradient(currentColor 0 0) 100% 0 / 12px 1px, linear-gradient(currentColor 0 0) 100% 0 / 1px 12px, linear-gradient(currentColor 0 0) 0 100% / 12px 1px, linear-gradient(currentColor 0 0) 0 100% / 1px 12px, linear-gradient(currentColor 0 0) 100% 100% / 12px 1px, linear-gradient(currentColor 0 0) 100% 100% / 1px 12px
+  background-repeat: no-repeat
+  opacity: 0
+  transition: opacity .3s ease
+  pointer-events: none
+
+  &.is-locked
+    opacity: .75
+
+  @media (forced-colors: active)
+    display: none
+
+.r3-contact__label
+  position: absolute
+  top: 100%
+  left: 0
+  margin-top: .3rem
+  font-family: var(--dw-font-mono)
+  font-size: .6rem
+  letter-spacing: .14em
+  text-transform: uppercase
+  white-space: nowrap
+  text-shadow: 0 0 6px rgb(0 0 0 / 90%)
+
 .r3-sky
   opacity: 0
   transition: opacity .9s ease
