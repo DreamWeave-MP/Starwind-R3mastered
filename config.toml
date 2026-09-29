@@ -57,6 +57,13 @@ font_override_titles_only = false
 # DreamWeave's own page-view counter: this is DreamWeave's site.
 goatcounter = "dreamweave-mp"
 
+# The hero drawn live: the view from orbit and the mark as a chrome star (static/js/r3-hero.js).
+[extra.hero]
+script = "js/r3-hero.js"
+preload = ["js/vendor/three.module.min.js", "js/vendor/three.core.min.js"]
+home = false
+projects = true
+
 # GitHub Discussions on this repository, through giscus. The ids are looked up at build time.
 [extra.comments]
 enabled = true

@@ -14,15 +14,24 @@
   --dw-code-bg: #0d161d
   --dw-code-inline-bg: #142530
 
+// The planet's own colours and the violet of the lower nebula, shared by the still below and the
+// live hero (static/js/r3-hero.js), which reads them from here.
+:root
+  --r3-violet: #6e54d6
+  --r3-planet: #11232b
+  --r3-ocean: #0f4a5c
+  --r3-land: #8a7152
+
 ::selection
   background: color-mix(in oklab, var(--dw-accent) 32%, transparent)
 
 // The hero is a view from orbit: pinpoint stars, a nebula at the top, and a planet's lit edge
-// rising in the corner. All of it sits behind the text, which never loses contrast.
+// rising in the corner. All of it sits behind the text, which never loses contrast. With WebGL,
+// static/js/r3-hero.js draws the same view live over this still, which leaves once it is covered.
 .dw-hero
   overflow: hidden
   isolation: isolate
-  background: radial-gradient(ellipse 55% 110% at 82% -20%, color-mix(in oklab, var(--dw-accent) 14%, transparent), transparent 70%), radial-gradient(ellipse 40% 80% at 8% 120%, rgb(110 84 214 / 12%), transparent 70%), linear-gradient(180deg, var(--dw-bg-1), var(--dw-bg-0))
+  background: radial-gradient(ellipse 55% 110% at 82% -20%, color-mix(in oklab, var(--dw-accent) 14%, transparent), transparent 70%), radial-gradient(ellipse 40% 80% at 8% 120%, color-mix(in oklab, var(--r3-violet) 12%, transparent), transparent 70%), linear-gradient(180deg, var(--dw-bg-1), var(--dw-bg-0))
 
   // Stars: pinpoints on tiles of unrelated sizes, so no pattern repeats where the eye can find it.
   &::before
@@ -45,7 +54,7 @@
     width: 60rem
     aspect-ratio: 1
     border-radius: 50%
-    background: radial-gradient(circle at 42% 8%, #11232b, #070c11 42%)
+    background: radial-gradient(circle at 42% 8%, var(--r3-planet), var(--dw-bg-0) 42%)
     box-shadow: 0 -2px 0 color-mix(in oklab, var(--dw-accent) 55%, transparent), 0 -18px 60px color-mix(in oklab, var(--dw-accent) 22%, transparent), inset 0 14px 40px color-mix(in oklab, var(--dw-accent) 18%, transparent)
     pointer-events: none
 
@@ -54,6 +63,31 @@
       right: -26rem
       bottom: -55rem
       opacity: .7
+
+  // Under the live canvas, which fades in over them.
+  &.dw-hero--art::before
+    z-index: -3
+
+  &.dw-hero--art::after
+    z-index: -2
+
+  &.r3-hero--live::before,
+  &.r3-hero--live::after
+    display: none
+
+  @media (forced-colors: active)
+    .r3-sky
+      display: none
+
+.r3-sky
+  opacity: 0
+  transition: opacity .9s ease
+
+  &.is-ready
+    opacity: 1
+
+  @media (prefers-reduced-motion: reduce)
+    transition: none
 
 .dw-hero__title
   background: linear-gradient(100deg, var(--dw-text) 30%, var(--dw-accent) 95%)
