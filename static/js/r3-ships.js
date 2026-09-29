@@ -72,11 +72,10 @@ const SHIP_FRAGMENT = /* glsl */ `
     float l = length(v);
     return l > 1e-5 ? v / l : fallback;
   }
-  // A seam one pixel wide wherever x crosses a whole number.
-  float seam(float x) {
-    float w = max(fwidth(x), 1e-4);
+  // A seam one pixel wide wherever x crosses a whole number; w is how far x moves across a pixel.
+  float seam(float x, float w) {
     float d = min(fract(x), 1.0 - fract(x));
-    return 1.0 - smoothstep(0.0, w * 1.2, d);
+    return 1.0 - smoothstep(0.0, max(w, 1e-4) * 1.2, d);
   }
 
   void main() {
@@ -85,6 +84,19 @@ const SHIP_FRAGMENT = /* glsl */ `
     vec3 v = safeNormalize(uCamera - vWorld, vec3(0.0, 0.0, 1.0));
     if (dot(n, v) < 0.0) n = -n;
 
+    // Panels, on the plane the face lies most nearly in. Their screen derivatives are taken here,
+    // before the engines return early: inside a branch they are undefined along its edges.
+    vec3 an = abs(vObjectNormal);
+    bool onTop = an.y > max(an.x, an.z);
+    bool sideways = !onTop && an.x > an.z;
+    vec2 uv = onTop ? vObject.xz : (sideways ? vObject.zy : vObject.xy);
+    vec2 cell = uv * uPanels;
+    vec2 cellWidth = fwidth(cell);
+    vec2 mapUv = uv * uMapScale + vec2(vKind * 0.37, 0.0);
+    vec2 mapDx = dFdx(mapUv);
+    vec2 mapDy = dFdy(mapUv);
+    vec2 step2 = max(abs(mapDx) + abs(mapDy), vec2(1.0 / 2048.0));
+
     if (vKind > 1.5 && vKind < 2.5) {
       float flicker = 0.85 + 0.15 * sin(uTime * 31.0 + vObject.x * 50.0 + vObject.y * 37.0);
       vec3 burn = uEngine * (2.6 + 4.0 * uBoost) * flicker;
@@ -92,31 +104,23 @@ const SHIP_FRAGMENT = /* glsl */ `
       return;
     }
 
-    // Panels, on the plane the face lies most nearly in.
-    vec3 an = abs(vObjectNormal);
-    bool onTop = an.y > max(an.x, an.z);
-    bool sideways = !onTop && an.x > an.z;
-    vec2 uv = onTop ? vObject.xz : (sideways ? vObject.zy : vObject.xy);
-    vec2 cell = uv * uPanels;
     float tone = 0.8 + 0.32 * hash21(floor(cell) + floor(vKind * 7.0));
-    float seams = max(seam(cell.x), seam(cell.y * 0.5));
+    float seams = max(seam(cell.x, cellWidth.x), seam(cell.y * 0.5, cellWidth.y * 0.5));
     vec3 base = uHull;
     float ports = 0.0;
     if (uTextured > 0.5 && (vKind < 1.5 || (vKind > 2.5 && vKind < 3.5))) {
       // The painted plating: its colour, and its relief turned into a tilt of the normal, measured
       // a screen pixel apart so it neither vanishes up close nor shimmers far off.
-      vec2 mapUv = uv * uMapScale + vec2(vKind * 0.37, 0.0);
-      vec2 step2 = max(fwidth(mapUv), vec2(1.0 / 2048.0));
-      vec4 detail = texture2D(uDetailMap, mapUv);
-      float hx = texture2D(uDetailMap, mapUv + vec2(step2.x, 0.0)).r;
-      float hy = texture2D(uDetailMap, mapUv + vec2(0.0, step2.y)).r;
+      vec4 detail = textureGrad(uDetailMap, mapUv, mapDx, mapDy);
+      float hx = textureGrad(uDetailMap, mapUv + vec2(step2.x, 0.0), mapDx, mapDy).r;
+      float hy = textureGrad(uDetailMap, mapUv + vec2(0.0, step2.y), mapDx, mapDy).r;
       vec3 tu = onTop ? vec3(1.0, 0.0, 0.0) : (sideways ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0));
       vec3 tv = onTop ? vec3(0.0, 0.0, 1.0) : vec3(0.0, 1.0, 0.0);
       vec3 objectNormal = normalize(vObjectNormal);
       vec3 bumped = objectNormal - (tu * (hx - detail.r) + tv * (hy - detail.r)) * 3.0;
       n = safeNormalize(uRotation * bumped, n);
       if (dot(n, v) < 0.0) n = -n;
-      base = texture2D(uHullMap, mapUv).rgb * mix(0.55, 1.0, smoothstep(0.1, 0.35, detail.r));
+      base = textureGrad(uHullMap, mapUv, mapDx, mapDy).rgb * mix(0.55, 1.0, smoothstep(0.1, 0.35, detail.r));
       ports = detail.g;
       tone = 1.0;
       seams = 0.0;
