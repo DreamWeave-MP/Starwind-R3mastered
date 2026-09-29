@@ -14,13 +14,12 @@
   --dw-code-bg: #0d161d
   --dw-code-inline-bg: #142530
 
-// The planet's own colours and the violet of the lower nebula, shared by the still below and the
-// live hero (static/js/r3-hero.js), which reads them from here.
+// The planet's night and the violet of the lower nebula, shared by the still below and the live
+// hero (static/js/r3-hero.js), which reads them from here. The live planet's own colours come from
+// the world it shows (static/js/r3-worlds.js).
 :root
   --r3-violet: #6e54d6
   --r3-planet: #11232b
-  --r3-ocean: #0f4a5c
-  --r3-land: #8a7152
 
 ::selection
   background: color-mix(in oklab, var(--dw-accent) 32%, transparent)
@@ -82,6 +81,49 @@
   // The planet can be dragged sideways; vertical swipes still scroll the page.
   &.dw-hero--art
     touch-action: pan-y pinch-zoom
+
+// The live hero's survey readout: which world this is, small in the corner over the planet.
+.r3-survey
+  position: absolute
+  right: max(1rem, calc((100% - var(--dw-width-page)) / 2 + 1.5rem))
+  bottom: .8rem
+  display: flex
+  flex-wrap: wrap
+  justify-content: flex-end
+  gap: .2rem .7rem
+  max-width: 60%
+  margin: 0
+  color: color-mix(in oklab, var(--dw-accent) 80%, white)
+  font-family: var(--dw-font-mono)
+  font-size: .68rem
+  letter-spacing: .14em
+  line-height: 1.3
+  text-transform: uppercase
+  text-shadow: 0 0 6px rgb(0 0 0 / 90%), 0 0 14px rgb(0 0 0 / 70%)
+  opacity: 0
+  transition: opacity .9s ease
+  pointer-events: none
+
+  .r3-hero--live &
+    opacity: .85
+
+  @media (forced-colors: active)
+    display: none
+
+.r3-survey__tag
+  color: var(--dw-text-faint)
+
+.r3-survey__tag::after
+  content: " ▸"
+
+.r3-survey__name
+  font-weight: 700
+
+.r3-survey__note
+  color: var(--dw-text-muted)
+
+  @media (max-width: 600px)
+    display: none
 
 .r3-sky
   opacity: 0

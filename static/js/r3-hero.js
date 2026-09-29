@@ -27,6 +27,7 @@
 // [data-dw-hero-art] behind the text, which the canvas fills.
 
 import * as THREE from './vendor/three.module.min.js';
+import { pickWorld } from './r3-worlds.js';
 
 const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -160,20 +161,26 @@ const SKY_FRAGMENT = /* glsl */ `
   uniform mat3 uCloudBody;  // the same for the cloud deck, which turns a little faster
   uniform vec3 uAccent;
   uniform vec3 uNight;
-  uniform vec3 uOcean;
-  uniform vec3 uLand;
   uniform vec3 uAir;
+  // The world, from r3-worlds.js.
+  uniform vec3 uLowland;
+  uniform vec3 uLand;
+  uniform vec3 uHighland;
+  uniform vec3 uCloud;
+  uniform vec3 uCity;
+  uniform vec4 uWorldA;     // sea level, cloud threshold, settlement, feature scale
+  uniform vec4 uWorldB;     // ice, lava, bands, floating cities
   ${NOISE}
 
   // City lights: one in some cells of a lattice through the surface, clustered where the land is
   // populous. A light counts when it lies near the surface, and is measured along it, so every
   // one that counts is a sharp point rather than a blur sliced at some depth.
-  float cityLights(vec3 t) {
+  float cityLights(vec3 t, float fill) {
     vec3 g = t * 55.0;
     vec3 id = floor(g);
     vec3 f = fract(g) - 0.5;
     float h = hash31(id + 13.1);
-    if (h > 0.4) return 0.0;
+    if (h > fill) return 0.0;
     vec3 offset = (vec3(hash31(id + 1.7), hash31(id + 4.3), hash31(id + 8.9)) - 0.5) * 0.35;
     vec3 d = f - offset;
     float depth = dot(d, t);
@@ -238,11 +245,39 @@ const SKY_FRAGMENT = /* glsl */ `
         vec3 n = vec3(q, z);
         vec3 t = uBody * n;
         vec3 tc = uCloudBody * n;
-        float land = smoothstep(0.53, 0.6, fbm3(t * 2.1 + 4.0));
+        float scale = uWorldA.w;
+        float settled = uWorldA.z;
+        float elevation = fbm3(t * 2.1 * scale + 4.0);
+        float land = smoothstep(uWorldA.x, uWorldA.x + 0.05, elevation);
+        float high = smoothstep(uWorldA.x + 0.08, uWorldA.x + 0.26, elevation) * land;
+        vec3 ground = mix(uLand, uHighland, high) * (0.8 + 0.4 * fbm3(t * 9.0 * scale));
+        vec3 albedo = mix(uLowland * (0.85 + 0.3 * fbm3(t * 4.0 + 2.0)), ground, land);
         float cloud = fbm3(tc * vec3(3.2, 7.5, 3.2) + vec3(uTime * 0.006, 0.0, 0.0));
-        cloud = smoothstep(0.52, 0.78, cloud);
-        vec3 albedo = mix(uOcean, uLand * (0.8 + 0.4 * fbm3(t * 9.0)), land);
-        albedo = mix(albedo, vec3(0.82, 0.93, 1.0), cloud * 0.85);
+        cloud = smoothstep(uWorldA.y, uWorldA.y + 0.22, cloud);
+
+        // A city from pole to pole: its blocks show by day as a grid.
+        if (settled > 0.9) {
+          vec3 blocks = abs(fract(t * 90.0) - 0.5);
+          float street = 1.0 - smoothstep(0.0, 0.08, min(min(blocks.x, blocks.y), blocks.z));
+          albedo *= 1.0 - 0.3 * street * land;
+        }
+        // Polar caps, reaching toward the equator with the world's cold.
+        float ice = smoothstep(1.02 - uWorldB.x, 1.1 - uWorldB.x, abs(t.y) + 0.12 * (fbm3(t * 6.0) - 0.5)) * step(0.001, uWorldB.x);
+        albedo = mix(albedo, vec3(0.86, 0.93, 1.0), ice);
+        land = max(land, ice);
+        // A gas giant: belts and zones sheared by turbulence, turning with the faster deck.
+        if (uWorldB.z > 0.5) {
+          float turbulence = fbm3(tc * vec3(3.0, 9.0, 3.0));
+          float belt = 0.5 + 0.5 * sin(t.y * 11.0 + (turbulence - 0.5) * 3.2);
+          float fine = 0.5 + 0.5 * sin(t.y * 37.0 + turbulence * 7.0);
+          albedo = mix(mix(uLowland, uLand, belt), uHighland, fine * 0.35);
+          vec2 storm = vec2(atan(tc.x, tc.z) - 0.6, (t.y + 0.28) * 3.0);
+          float eye = exp(-dot(storm, storm) * 9.0);
+          albedo = mix(albedo, uCloud, eye * 0.8);
+          land = 1.0;
+          cloud = 0.0;
+        }
+        albedo = mix(albedo, uCloud, cloud * 0.85);
 
         float ndl = dot(n, sun);
         float day = smoothstep(-0.06, 0.3, ndl);
@@ -252,7 +287,7 @@ const SKY_FRAGMENT = /* glsl */ `
         vec3 h = sun + vec3(0.0, 0.0, 1.0);
         float hl = length(h);
         h = hl > 1e-4 ? h / hl : vec3(0.0, 0.0, 1.0);
-        float water = (1.0 - land) * (1.0 - cloud);
+        float water = (1.0 - land) * (1.0 - cloud) * (1.0 - uWorldB.z);
         float glint = pow(max(dot(n, h), 0.0), 220.0) * 4.0 + pow(max(dot(n, h), 0.0), 24.0) * 0.12;
         lit += uSunColor * glint * water * day;
 
@@ -260,12 +295,21 @@ const SKY_FRAGMENT = /* glsl */ `
         // the cyan nebula above, and the cities of the populous land glittering, so the turning
         // shows on the dark as well as in the crescent. The lights fade where the limb would
         // squeeze them thinner than a pixel.
-        vec3 nebulaLight = uAccent * 0.22 * max(dot(n, vec3(0.2, 0.75, 0.63)), 0.0);
+        vec3 nebulaLight = mix(vec3(0.6, 0.66, 0.78), uAccent, 0.3) * 0.2 * max(dot(n, vec3(0.2, 0.75, 0.63)), 0.0);
         vec3 night = uNight * (0.35 + 0.3 * n.y) + albedo * nebulaLight;
-        float populous = smoothstep(0.4, 0.6, fbm3(t * 5.0 + 11.0));
-        float cities = cityLights(t) * land * populous * (1.0 - 0.85 * cloud) * smoothstep(0.06, 0.3, z);
-        night += vec3(1.0, 0.72, 0.42) * cities * 1.25;
+        float populous = settled > 0.9 ? 1.0 : smoothstep(0.62 - 0.3 * settled, 0.72 - 0.3 * settled, fbm3(t * 5.0 + 11.0));
+        float habitable = mix(land * (1.0 - ice), 1.0, uWorldB.w) * (1.0 - uWorldB.z);
+        float cities = cityLights(t, 0.3 + 0.5 * settled) * habitable * populous * step(0.001, settled);
+        cities *= (1.0 - 0.85 * cloud) * smoothstep(0.06, 0.3, z);
+        night += uCity * cities * 1.25;
         vec3 surface = mix(night, lit, day);
+
+        // Lava: rifts that glow by day and night alike.
+        if (uWorldB.y > 0.0) {
+          float rift = 1.0 - abs(2.0 * fbm3(t * 5.5 * scale + 7.0) - 1.0);
+          float molten = uWorldB.y * (smoothstep(0.94, 0.995, rift) + 0.12 * smoothstep(0.8, 0.95, rift)) * (1.0 - 0.7 * cloud);
+          surface += vec3(1.0, 0.24, 0.03) * molten * (1.5 + 0.5 * sin(uTime * 1.3 + rift * 20.0));
+        }
 
         // Haze thickening towards the limb, lit where the air is.
         float haze = pow(1.0 - z, 5.0);
@@ -437,6 +481,8 @@ const COMPOSITE_FRAGMENT = /* glsl */ `
   uniform float uRatio;
   uniform vec2 uSunPx;
   uniform float uSunShow;
+  uniform vec2 uSun2Px;      // a second sun, on twin-sun worlds
+  uniform float uSun2Show;
   uniform vec3 uSunColor;
   uniform vec3 uAccent;
   uniform vec2 uGlintPx;
@@ -475,6 +521,10 @@ const COMPOSITE_FRAGMENT = /* glsl */ `
     vec3 flare = uSunColor * (sun.x * 0.9 + sun.y * 1.6 + wide.x * 0.12 + wide.y * 0.22) + mix(uAccent, uSunColor, 0.4) * (streak * 0.22 + ring);
     float overPlanet = 1.0 - smoothstep(uPlanetPx.z - 2.0, uPlanetPx.z + 2.0, length(gl_FragCoord.xy - uPlanetPx.xy));
     color += flare * uSunShow * (1.0 - 0.65 * overPlanet);
+    vec2 d2 = (gl_FragCoord.xy - uSun2Px) / uRatio;
+    vec3 second = fourPoint(d2, 30.0, 0.9, 3.0);
+    vec3 secondWide = fourPoint(d2, 14.0, 3.0, 14.0);
+    color += vec3(1.0, 0.78, 0.55) * (second.x * 0.8 + second.y * 1.4 + secondWide.y * 0.25) * uSun2Show * (1.0 - 0.65 * overPlanet);
 
     vec2 g = (gl_FragCoord.xy - uGlintPx) / uRatio;
     vec3 glint = fourPoint(g, 38.0, 0.9, 3.0);
@@ -593,9 +643,22 @@ function start(hero, art) {
   const night = token('--r3-planet', '#11232b');
   const top = token('--dw-bg-1', '#0b1218');
   const bottom = token('--dw-bg-0', '#070c11');
-  const ocean = token('--r3-ocean', '#0f4a5c');
-  const land = token('--r3-land', '#8a7152');
-  const air = accent.clone().lerp(new THREE.Color(0.2, 0.5, 1.0), 0.4).multiplyScalar(0.9);
+  // The world this page shows. Its atmosphere keeps a quarter of the site's cyan, so the arc
+  // still reads as Starwind's whatever the world.
+  const world = pickWorld();
+  const worldColor = (hex) => new THREE.Color(hex).convertSRGBToLinear();
+  const air = worldColor(world.air).lerp(accent, 0.25).multiplyScalar(0.9);
+  // Which world it is, read out small in the corner like a survey scanner's.
+  const survey = document.createElement('p');
+  survey.className = 'r3-survey';
+  survey.setAttribute('aria-hidden', 'true');
+  for (const [part, text] of [['tag', 'Survey'], ['name', world.name], ['note', world.note]]) {
+    const span = document.createElement('span');
+    span.className = `r3-survey__${part}`;
+    span.textContent = text;
+    survey.append(span);
+  }
+  (art || hero).append(survey);
   const sunColor = new THREE.Color(1.0, 0.93, 0.82).multiplyScalar(1.6);
 
   const post = new THREE.Scene();
@@ -636,9 +699,14 @@ function start(hero, art) {
     uCloudBody: { value: new THREE.Matrix3() },
     uAccent: { value: accent },
     uNight: { value: night },
-    uOcean: { value: ocean },
-    uLand: { value: land },
     uAir: { value: air },
+    uLowland: { value: worldColor(world.lowland) },
+    uLand: { value: worldColor(world.land) },
+    uHighland: { value: worldColor(world.highland) },
+    uCloud: { value: worldColor(world.cloud) },
+    uCity: { value: worldColor(world.city) },
+    uWorldA: { value: new THREE.Vector4(0.3 + 0.4 * world.sea, 0.78 - 0.38 * world.clouds, world.cities, world.scale) },
+    uWorldB: { value: new THREE.Vector4(world.ice, world.lava, world.bands, world.floating) },
   };
   const skyMaterial = fullscreenMaterial(SKY_FRAGMENT, skyUniforms);
 
@@ -684,6 +752,8 @@ function start(hero, art) {
     uRatio: { value: 1 },
     uSunPx: { value: new THREE.Vector2() },
     uSunShow: { value: 0 },
+    uSun2Px: { value: new THREE.Vector2(-1e4, -1e4) },
+    uSun2Show: { value: 0 },
     uSunColor: { value: sunColor },
     uAccent: { value: accent },
     uGlintPx: { value: new THREE.Vector2() },
@@ -952,7 +1022,7 @@ function start(hero, art) {
     const rise = 0.5 + 0.5 * Math.sin(t * 0.07 - 0.6);
     const alongX = sunAlong + 0.03 * Math.sin(t * 0.021);
     const along = new THREE.Vector2(alongX, Math.sqrt(Math.max(0.05, 1 - alongX * alongX))).normalize();
-    sunDir.value.set(along.x * 0.42, along.y * 0.42, -(0.92 - 0.1 * rise)).normalize();
+    sunDir.value.set(along.x * 0.55, along.y * 0.55, -(0.84 - 0.1 * rise)).normalize();
     // The planet turns about an axis leaning toward the viewer, so the surface rolls along the arc
     // out of the night and into the sunrise: once in about three and a half minutes, some fifteen
     // pixels a second at the crown of a wide hero. The cloud deck turns a little faster, so it
@@ -980,6 +1050,14 @@ function start(hero, art) {
     compositeUniforms.uSunPx.value.set(sunX * ratio, sunY * ratio);
     compositeUniforms.uPlanetPx.value.set((planet.x - drift.value.x * 26) * ratio, (planet.y - drift.value.y * 26) * ratio, planet.radius * ratio);
     compositeUniforms.uSunShow.value = (0.25 + 0.75 * Math.min(1, rise * 1.6 + 0.2)) * (narrow ? 0.55 : 1);
+    // A twin-sun world's second sun trails the first along the limb, lower and smaller.
+    if (world.suns > 1) {
+      const trail = 0.12;
+      const second = new THREE.Vector2(along.x * Math.cos(-trail) - along.y * Math.sin(-trail), along.x * Math.sin(-trail) + along.y * Math.cos(-trail));
+      const lift2 = planet.radius * (1.0 + 0.002 + 0.012 * rise);
+      compositeUniforms.uSun2Px.value.set((planet.x - drift.value.x * 26 + second.x * lift2) * ratio, (planet.y - drift.value.y * 26 + second.y * lift2) * ratio);
+      compositeUniforms.uSun2Show.value = compositeUniforms.uSunShow.value * 0.8;
+    }
 
     // The jewel: a slow sway, the lean toward the pointer, and now and then a quarter turn.
     if (!reduceMotion && clockTime >= nextSpin) {
