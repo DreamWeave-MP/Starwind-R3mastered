@@ -1337,7 +1337,9 @@ function start(hero, art) {
     compositeUniforms.uGlintPx.value.set((tipWorld.x * 0.5 + 0.5) * width * ratio, (tipWorld.y * 0.5 + 0.5) * height * ratio);
     compositeUniforms.uGlint.value = Math.max(glint, sparkle * 0.8) * (narrow ? 0.6 : 1);
 
-    // The ships, and any hyperspace flash they make.
+    // The ships, and any hyperspace flash they make. They hide behind the planet where the sky
+    // draws it.
+    fleet.planet((planet.x - drift.value.x * 26) * ratio, (planet.y - drift.value.y * 26) * ratio, planet.radius * ratio);
     const shipFlash = fleet.update(reduceMotion ? 0 : dt);
     // An explosion shakes the camera for a moment.
     if (shipFlash.shake > 0) {

@@ -15,6 +15,20 @@
 import * as THREE from './vendor/three.module.min.js';
 import { FACTIONS, buildCapital, buildFighter, pickScenario } from './r3-shipyard.js';
 
+// The planet, which the sky draws as a disc, stands behind the ships as a sphere: its front surface
+// is uPlanetDepth.x from the camera at its limb, uPlanetDepth.y nearer at the disc's centre. A
+// fragment of a ship, trail, bolt or blast that lies behind that surface is hidden, so a fighter
+// diving for the horizon slips behind the limb, and one climbing from the far side rises over it.
+const PLANET = /* glsl */ `
+  uniform vec3 uPlanetDisc;  // the disc's centre and radius, device pixels, y up
+  uniform vec2 uPlanetDepth;
+  bool behindPlanet(float depth) {
+    float r = length(gl_FragCoord.xy - uPlanetDisc.xy) / max(uPlanetDisc.z, 1.0);
+    if (r >= 1.0) return false;
+    return depth > uPlanetDepth.x - uPlanetDepth.y * sqrt(1.0 - r * r);
+  }
+`;
+
 const SHIP_VERTEX = /* glsl */ `
   attribute float aKind;
   uniform float uStretch;
@@ -24,6 +38,7 @@ const SHIP_VERTEX = /* glsl */ `
   varying vec3 vWorld;
   varying vec3 vNormal;
   varying float vKind;
+  varying float vDepth;
   void main() {
     vec3 p = position;
     // Hyperspace: stretched along the heading about one end, which stays put.
@@ -34,7 +49,9 @@ const SHIP_VERTEX = /* glsl */ `
     vec4 world = modelMatrix * vec4(p, 1.0);
     vWorld = world.xyz;
     vNormal = normalize(mat3(modelMatrix) * normal);
-    gl_Position = projectionMatrix * viewMatrix * world;
+    vec4 view = viewMatrix * world;
+    vDepth = -view.z;
+    gl_Position = projectionMatrix * view;
   }
 `;
 
@@ -66,6 +83,8 @@ const SHIP_FRAGMENT = /* glsl */ `
   uniform sampler2D uDetailMap;  // r: relief, g: lit ports
   uniform float uMapScale;
   uniform mat3 uRotation;    // the ship's turn, object to world
+  varying float vDepth;
+  ${PLANET}
 
   float hash21(vec2 p) {
     p = fract(p * vec2(123.34, 456.21));
@@ -100,6 +119,7 @@ const SHIP_FRAGMENT = /* glsl */ `
     vec2 mapDx = dFdx(mapUv);
     vec2 mapDy = dFdy(mapUv);
     vec2 step2 = max(abs(mapDx) + abs(mapDy), vec2(1.0 / 2048.0));
+    if (behindPlanet(vDepth)) discard;
 
     if (vKind > 1.5 && vKind < 2.5) {
       float flicker = 0.85 + 0.15 * sin(uTime * 31.0 + vObject.x * 50.0 + vObject.y * 37.0);
@@ -206,16 +226,22 @@ const LIGHT_FRAGMENT = /* glsl */ `
 const LINE_VERTEX = /* glsl */ `
   attribute float aAlpha;
   varying float vAlpha;
+  varying float vDepth;
   void main() {
     vAlpha = aAlpha;
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    vec4 view = modelViewMatrix * vec4(position, 1.0);
+    vDepth = -view.z;
+    gl_Position = projectionMatrix * view;
   }
 `;
 
 const LINE_FRAGMENT = /* glsl */ `
   uniform vec3 uColor;
   varying float vAlpha;
+  varying float vDepth;
+  ${PLANET}
   void main() {
+    if (behindPlanet(vDepth)) discard;
     gl_FragColor = vec4(uColor * vAlpha, 1.0);
   }
 `;
@@ -232,6 +258,7 @@ const PARTICLE_VERTEX = /* glsl */ `
   uniform float uMaxSize;    // no sprite larger than this, device pixels
   varying float vAge;
   varying float vKind;
+  varying float vDepth;
   void main() {
     float t = uNow - aLife.x;
     float age = t / max(aLife.y, 1e-3);
@@ -245,6 +272,7 @@ const PARTICLE_VERTEX = /* glsl */ `
     float slowing = aLife.w > 0.5 && aLife.w < 1.5 ? 0.15 : 0.55;
     vec3 p = position + aVelocity * t * (1.0 - slowing * age);
     vec4 view = modelViewMatrix * vec4(p, 1.0);
+    vDepth = -view.z;
     gl_Position = projectionMatrix * view;
     float grow = aLife.w < 0.5 ? 0.45 + 1.6 * sqrt(age) : 1.0;
     gl_PointSize = min(aLife.z * grow * uScale / max(-view.z, 0.1), uMaxSize);
@@ -254,7 +282,10 @@ const PARTICLE_VERTEX = /* glsl */ `
 const PARTICLE_FRAGMENT = /* glsl */ `
   varying float vAge;
   varying float vKind;
+  varying float vDepth;
+  ${PLANET}
   void main() {
+    if (behindPlanet(vDepth)) discard;
     float r = length(gl_PointCoord - 0.5) * 2.0;
     if (r > 1.0) discard;
     vec3 col;
@@ -296,17 +327,23 @@ const BOLT_VERTEX = /* glsl */ `
   attribute vec3 aColor;
   varying float vAlpha;
   varying vec3 vColor;
+  varying float vDepth;
   void main() {
     vAlpha = aAlpha;
     vColor = aColor;
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    vec4 view = modelViewMatrix * vec4(position, 1.0);
+    vDepth = -view.z;
+    gl_Position = projectionMatrix * view;
   }
 `;
 
 const BOLT_FRAGMENT = /* glsl */ `
   varying float vAlpha;
   varying vec3 vColor;
+  varying float vDepth;
+  ${PLANET}
   void main() {
+    if (behindPlanet(vDepth)) discard;
     gl_FragColor = vec4(vColor * vAlpha * 3.5, 1.0);
   }
 `;
@@ -446,6 +483,7 @@ function orient(object, forward, up) {
 
 export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduceMotion, overlay, anisotropy = 1, random = Math.random }) {
   const [hullMap, detailMap] = hullMaps(anisotropy);
+  const planetUniforms = { uPlanetDisc: { value: new THREE.Vector3(-1e5, -1e5, 1) }, uPlanetDepth: { value: new THREE.Vector2(40, 15) } };
   const linear = (hex) => new THREE.Color(hex).convertSRGBToLinear();
   const shipMaterial = (side, { textured = false, panels = 22, windows = 1, haze = 0 } = {}) => new THREE.ShaderMaterial({
     vertexShader: SHIP_VERTEX,
@@ -472,6 +510,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
       uRotation: { value: new THREE.Matrix3() },
       uStretch: { value: 1 },
       uAnchor: { value: 0 },
+      ...planetUniforms,
     },
     side: THREE.DoubleSide,
   });
@@ -544,7 +583,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
           const line = new THREE.Line(geometry, new THREE.ShaderMaterial({
             vertexShader: LINE_VERTEX,
             fragmentShader: LINE_FRAGMENT,
-            uniforms: { uColor: { value: linear(side.engine).multiplyScalar(2.2) } },
+            uniforms: { uColor: { value: linear(side.engine).multiplyScalar(2.2) }, ...planetUniforms },
             transparent: true,
             depthWrite: false,
             blending: THREE.AdditiveBlending,
@@ -568,6 +607,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
   const boltLines = new THREE.LineSegments(boltGeometry, new THREE.ShaderMaterial({
     vertexShader: BOLT_VERTEX,
     fragmentShader: BOLT_FRAGMENT,
+    uniforms: { ...planetUniforms },
     transparent: true,
     depthWrite: false,
     blending: THREE.AdditiveBlending,
@@ -583,7 +623,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
   particleGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(PARTICLES * 3), 3));
   particleGeometry.setAttribute('aVelocity', new THREE.BufferAttribute(new Float32Array(PARTICLES * 3), 3));
   particleGeometry.setAttribute('aLife', new THREE.BufferAttribute(new Float32Array(PARTICLES * 4).fill(-1000), 4));
-  const particleUniforms = { uNow: { value: 0 }, uScale: { value: 1 }, uMaxSize: { value: 64 } };
+  const particleUniforms = { uNow: { value: 0 }, uScale: { value: 1 }, uMaxSize: { value: 64 }, ...planetUniforms };
   const particles = new THREE.Points(particleGeometry, new THREE.ShaderMaterial({
     vertexShader: PARTICLE_VERTEX,
     fragmentShader: PARTICLE_FRAGMENT,
@@ -723,14 +763,17 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     const left = narrow ? width * 0.5 : Math.max(free + 40, width * 0.48);
     const right = width * 0.98;
     const mid = (left + right) / 2;
-    const kind = Math.floor(random() * 3);
+    // ?pass=dive, climb or cross picks the path, for screenshots.
+    const asked = ['dive', 'climb', 'cross'].indexOf(new URLSearchParams(location.search).get('pass'));
+    const kind = asked >= 0 ? asked : Math.floor(random() * 3);
     let screen;
     if (kind === 0) {
-      // A dive: from beside the viewer down toward the planet's limb.
+      // A dive: from beside the viewer down toward the planet, slipping behind its limb.
       screen = [[right + 60, height * 1.15, 5], [right - (right - left) * 0.1, height * 0.75, 1.5], [mid, height * 0.5, -8], [left + (right - left) * 0.2, height * 0.72, -28]];
     } else if (kind === 1) {
-      // A climb: up from the horizon, past the star and out over the viewer's shoulder.
-      screen = [[mid, height * 0.8, -28], [mid + (right - mid) * 0.3, height * 0.55, -10], [right - 40, height * 0.3, -1], [right + 120, -height * 0.3, 5]];
+      // A climb: from behind the planet, over its limb while still far off, past the star and out
+      // over the viewer's shoulder.
+      screen = [[mid, height * 0.85, -42], [mid + (right - mid) * 0.2, height * 0.35, -32], [right - 40, height * 0.25, -4], [right + 120, -height * 0.3, 5]];
     } else {
       // A crossing, high and fast, away into the distance.
       screen = [[right + 80, height * 0.3, -1], [right - (right - left) * 0.25, height * 0.12, -3], [left + (right - left) * 0.35, height * 0.35, -9], [left, height * 0.18, -24]];
@@ -1040,6 +1083,10 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
   }
 
   return {
+    // Where the sky drew the planet this frame: its centre and radius in device pixels, y up.
+    planet(x, y, radius) {
+      planetUniforms.uPlanetDisc.value.set(x, y, radius);
+    },
     // Whether a click at this point of the hero would hit a ship, for the cursor.
     aimed(x, y) {
       return !!targetAt(x, y);
