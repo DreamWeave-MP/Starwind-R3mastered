@@ -812,6 +812,81 @@ function start(hero, art) {
     requestFrame();
   }, { passive: true });
 
+  // Drag the planet, as the moon on the l3i site drags: the surface follows the pointer and keeps
+  // turning after release, the spin decaying, while the planet's own turn carries on beneath. A
+  // drag along the arc rolls it about its axis; a drag up or down tips it over the limb.
+  const turned = new THREE.Quaternion();
+  const nudge = new THREE.Quaternion();
+  const dragInverse = new THREE.Matrix4();
+  const spinAxisView = new THREE.Vector3(0.1, 0.35, 1).normalize();
+  const axisX = new THREE.Vector3(1, 0, 0);
+  const planetDrag = { active: false, id: -1, lastX: 0, lastY: 0, vx: 0, vy: 0 };
+  function heroPoint(event) {
+    const bounds = hero.getBoundingClientRect();
+    return { x: event.clientX - bounds.left, y: event.clientY - bounds.top };
+  }
+  function overJewel(point) {
+    const dx = point.x - jewelPx.x;
+    const dy = point.y - jewelPx.y;
+    return dx * dx + dy * dy <= (jewelPx.radius * 1.4) ** 2;
+  }
+  function overPlanet(point) {
+    const dx = point.x - (planet.x - drift.value.x * 26);
+    const dy = point.y - (height - (planet.y - drift.value.y * 26));
+    return dx * dx + dy * dy <= planet.radius * planet.radius;
+  }
+  function turnPlanet(dx, dy) {
+    nudge.setFromAxisAngle(spinAxisView, -dx / planet.radius);
+    turned.premultiply(nudge);
+    nudge.setFromAxisAngle(axisX, dy / planet.radius);
+    turned.premultiply(nudge);
+    turned.normalize();
+  }
+  const interactive = 'a, button, input, summary, [role="button"]';
+  hero.addEventListener('pointerdown', (event) => {
+    if (!event.isPrimary || event.button > 0 || event.target.closest(interactive)) return;
+    const point = heroPoint(event);
+    if (overJewel(point) || !overPlanet(point)) return;
+    planetDrag.active = true;
+    planetDrag.id = event.pointerId;
+    planetDrag.lastX = event.clientX;
+    planetDrag.lastY = event.clientY;
+    planetDrag.vx = 0;
+    planetDrag.vy = 0;
+    hero.setPointerCapture(event.pointerId);
+    hero.style.cursor = 'grabbing';
+    event.preventDefault();
+    requestFrame();
+  });
+  hero.addEventListener('pointermove', (event) => {
+    if (!planetDrag.active) {
+      const point = heroPoint(event);
+      const grabbable = !event.target.closest(interactive) && !overJewel(point) && overPlanet(point);
+      hero.style.cursor = grabbable ? 'grab' : '';
+      return;
+    }
+    if (event.pointerId !== planetDrag.id) return;
+    const dx = event.clientX - planetDrag.lastX;
+    const dy = event.clientY - planetDrag.lastY;
+    planetDrag.lastX = event.clientX;
+    planetDrag.lastY = event.clientY;
+    planetDrag.vx = dx;
+    planetDrag.vy = dy;
+    turnPlanet(dx, dy);
+    if (reduceMotion) requestFrame();
+  }, { passive: true });
+  function releasePlanet(event) {
+    if (!planetDrag.active || event.pointerId !== planetDrag.id) return;
+    planetDrag.active = false;
+    hero.style.cursor = overPlanet(heroPoint(event)) ? 'grab' : '';
+    if (reduceMotion) {
+      planetDrag.vx = 0;
+      planetDrag.vy = 0;
+    }
+  }
+  hero.addEventListener('pointerup', releasePlanet, { passive: true });
+  hero.addEventListener('pointercancel', releasePlanet, { passive: true });
+
   let spinBase = 0;
   // Sparkles: now and then one of the four points flashes, and the top one always does in a spin.
   let sparkleTip = 0;
@@ -882,9 +957,22 @@ function start(hero, art) {
     // out of the night and into the sunrise: once in about three and a half minutes, some fifteen
     // pixels a second at the crown of a wide hero. The cloud deck turns a little faster, so it
     // slides over the ground.
-    spinMatrix.makeRotationY(t * PLANET_SPIN).multiply(alignAxis);
+    // A drag's spin carries on after release, fading over about a second and a half.
+    if (!planetDrag.active && (planetDrag.vx !== 0 || planetDrag.vy !== 0)) {
+      const decay = Math.exp(-dt * 2.2);
+      planetDrag.vx *= decay;
+      planetDrag.vy *= decay;
+      if (Math.abs(planetDrag.vx) + Math.abs(planetDrag.vy) < 0.02) {
+        planetDrag.vx = 0;
+        planetDrag.vy = 0;
+      } else {
+        turnPlanet(planetDrag.vx * dt * 60, planetDrag.vy * dt * 60);
+      }
+    }
+    dragInverse.makeRotationFromQuaternion(turned).invert();
+    spinMatrix.makeRotationY(t * PLANET_SPIN).multiply(alignAxis).multiply(dragInverse);
     skyUniforms.uBody.value.setFromMatrix4(spinMatrix);
-    spinMatrix.makeRotationY(t * PLANET_SPIN * 1.35 + 0.8).multiply(alignAxis);
+    spinMatrix.makeRotationY(t * PLANET_SPIN * 1.35 + 0.8).multiply(alignAxis).multiply(dragInverse);
     skyUniforms.uCloudBody.value.setFromMatrix4(spinMatrix);
     const lift = planet.radius * (1.0 + 0.004 + 0.02 * rise);
     const sunX = planet.x - drift.value.x * 26 + along.x * lift;

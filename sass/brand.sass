@@ -79,6 +79,10 @@
     .r3-sky
       display: none
 
+  // The planet can be dragged sideways; vertical swipes still scroll the page.
+  &.dw-hero--art
+    touch-action: pan-y pinch-zoom
+
 .r3-sky
   opacity: 0
   transition: opacity .9s ease
