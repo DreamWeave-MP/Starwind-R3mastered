@@ -1,16 +1,19 @@
-// The hero's ships, for r3-hero.js: a star destroyer that drops out of hyperspace, crosses the sky
-// behind the star and jumps away again, and a pair of starfighters that make passes, banking into
-// their turns with their engines trailing.
+// The hero's ships, for r3-hero.js, built from r3-shipyard.js. Each load picks a scenario: one side
+// of an era on patrol, or two sides at war. Capital ships drop out of hyperspace, cross the sky
+// behind the star under contact brackets naming their navy and class, charge their engines and
+// jump away, the two sides taking turns in a war. Fighters make passes in pairs, banking into their
+// turns with their engines trailing; at war they meet in dogfights, the pursuers following the
+// leaders' line a beat behind and firing on them in their own laser colour.
 //
-// Both are modelled here from boxes, cylinders and a hand-made hull, and share one shader: panel
-// seams and tones from their own coordinates, the sun from behind the planet, the planet's glow
-// from below, a backlit rim, lit windows along the superstructure, and engines that burn. Going to
-// or coming from hyperspace, a ship is stretched along its heading into a streak and washed white,
-// and a flash marks the moment. They fly only in the part of the hero the text leaves free, and
-// under prefers-reduced-motion the destroyer holds still in the middle of its crossing and the
-// fighters stay away.
+// Every ship shares one shader: panel seams and tones from its own coordinates, a painted plating
+// on the capital ships tinted by their livery, the sun from behind the planet, the planet's glow
+// from below, a backlit rim, lit ports and burning engines. Going to or coming from hyperspace, a
+// ship is stretched along its heading into a streak and washed white, and a flash marks the moment.
+// They fly only in the part of the hero the text leaves free, and under prefers-reduced-motion a
+// capital ship holds still in the middle of its crossing and the fighters stay away.
 
 import * as THREE from './vendor/three.module.min.js';
+import { FACTIONS, buildCapital, buildFighter, pickScenario } from './r3-shipyard.js';
 
 const SHIP_VERTEX = /* glsl */ `
   attribute float aKind;
@@ -35,7 +38,8 @@ const SHIP_VERTEX = /* glsl */ `
   }
 `;
 
-// Kinds: 0 hull, 1 fittings, 2 engine, 3 superstructure with windows, 4 painted, 5 canopy.
+// Kinds: 0 hull, 1 fittings, 2 engine, 3 superstructure with windows, 4 wing with a painted band,
+// 5 canopy, 6 painted, 7 solar panel. See r3-shipyard.js.
 const SHIP_FRAGMENT = /* glsl */ `
   precision highp float;
   varying vec3 vObject;
@@ -108,7 +112,11 @@ const SHIP_FRAGMENT = /* glsl */ `
     float seams = max(seam(cell.x, cellWidth.x), seam(cell.y * 0.5, cellWidth.y * 0.5));
     vec3 base = uHull;
     float ports = 0.0;
-    if (uTextured > 0.5 && (vKind < 1.5 || (vKind > 2.5 && vKind < 3.5))) {
+    bool painted = vKind > 5.5 && vKind < 6.5;
+    bool canopy = vKind > 4.5 && vKind < 5.5;
+    bool solar = vKind > 6.5;
+    if (painted) base = uPaint;
+    if (uTextured > 0.5 && (vKind < 1.5 || (vKind > 2.5 && vKind < 3.5) || painted)) {
       // The painted plating: its colour, and its relief turned into a tilt of the normal, measured
       // a screen pixel apart so it neither vanishes up close nor shimmers far off.
       vec4 detail = textureGrad(uDetailMap, mapUv, mapDx, mapDy);
@@ -120,7 +128,8 @@ const SHIP_FRAGMENT = /* glsl */ `
       vec3 bumped = objectNormal - (tu * (hx - detail.r) + tv * (hy - detail.r)) * 3.0;
       n = safeNormalize(uRotation * bumped, n);
       if (dot(n, v) < 0.0) n = -n;
-      base = textureGrad(uHullMap, mapUv, mapDx, mapDy).rgb * mix(0.55, 1.0, smoothstep(0.1, 0.35, detail.r));
+      // The plating is grey; the livery tints it, the paint where the hull is painted.
+      base = textureGrad(uHullMap, mapUv, mapDx, mapDy).rgb * mix(0.55, 1.0, smoothstep(0.1, 0.35, detail.r)) * (painted ? uPaint : uHull) * 4.0;
       ports = detail.g;
       tone = 1.0;
       seams = 0.0;
@@ -129,13 +138,20 @@ const SHIP_FRAGMENT = /* glsl */ `
       float r = length(vObject.xy);
       base = mix(uHull, uPaint, step(0.2, r) * step(r, 0.27));
     }
-    if (vKind > 4.5) base = vec3(0.02, 0.025, 0.035);
+    if (canopy) base = vec3(0.02, 0.025, 0.035);
+    // A solar panel: near black, ribbed, with a soft sheen rather than a canopy's hard glint.
+    if (solar) {
+      float ribs = seam(uv.y * 26.0, cellWidth.y * 26.0 / uPanels.y);
+      base = vec3(0.012, 0.014, 0.018) + uHull * 0.05 * ribs;
+      tone = 1.0;
+      seams = 0.0;
+    }
     base *= tone * (1.0 - 0.4 * seams);
 
     float sunLight = max(dot(n, uSunDir), 0.0);
     vec3 col = base * (uSunColor * sunLight * 0.95 + uAir * (0.07 + 0.2 * max(-n.y, 0.0)) + vec3(0.025, 0.03, 0.04));
     vec3 h = safeNormalize(uSunDir + v, n);
-    col += uSunColor * pow(max(dot(n, h), 0.0), vKind > 4.5 ? 160.0 : 48.0) * (vKind > 4.5 ? 2.0 : 0.45) * tone;
+    col += uSunColor * pow(max(dot(n, h), 0.0), canopy ? 160.0 : (solar ? 24.0 : 48.0)) * (canopy ? 2.0 : (solar ? 0.12 : 0.45)) * tone;
     float facing = max(dot(n, v), 0.0);
     col += uAir * pow(1.0 - facing, 4.0) * 0.35;
     col += uSunColor * pow(1.0 - facing, 3.0) * max(dot(-v, uSunDir), 0.0) * 0.9;
@@ -204,176 +220,26 @@ const LINE_FRAGMENT = /* glsl */ `
   }
 `;
 
-// Geometry -----------------------------------------------------------------------------------------
+// Laser bolts: short segments, each in its faction's colour.
+const BOLT_VERTEX = /* glsl */ `
+  attribute float aAlpha;
+  attribute vec3 aColor;
+  varying float vAlpha;
+  varying vec3 vColor;
+  void main() {
+    vAlpha = aAlpha;
+    vColor = aColor;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`;
 
-function merge(parts) {
-  const positions = [];
-  const normals = [];
-  const kinds = [];
-  for (const { geometry, matrix, kind } of parts) {
-    const flat = geometry.index ? geometry.toNonIndexed() : geometry;
-    if (matrix) flat.applyMatrix4(matrix);
-    const position = flat.getAttribute('position');
-    const normal = flat.getAttribute('normal');
-    for (let i = 0; i < position.count; i++) {
-      positions.push(position.getX(i), position.getY(i), position.getZ(i));
-      normals.push(normal.getX(i), normal.getY(i), normal.getZ(i));
-      kinds.push(kind);
-    }
+const BOLT_FRAGMENT = /* glsl */ `
+  varying float vAlpha;
+  varying vec3 vColor;
+  void main() {
+    gl_FragColor = vec4(vColor * vAlpha * 3.5, 1.0);
   }
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
-  geometry.setAttribute('aKind', new THREE.Float32BufferAttribute(kinds, 1));
-  return geometry;
-}
-
-// A closed hull from triangles, each turned to face away from the given centre, with flat normals.
-function hull(triangles, centre) {
-  const positions = [];
-  const normals = [];
-  const a = new THREE.Vector3();
-  const b = new THREE.Vector3();
-  const c = new THREE.Vector3();
-  const n = new THREE.Vector3();
-  const mid = new THREE.Vector3();
-  for (const [p, q, r] of triangles) {
-    a.fromArray(p);
-    b.fromArray(q);
-    c.fromArray(r);
-    n.subVectors(b, a).cross(c.clone().sub(a)).normalize();
-    mid.copy(a).add(b).add(c).divideScalar(3).sub(centre);
-    if (n.dot(mid) < 0) {
-      [b.x, b.y, b.z, c.x, c.y, c.z] = [c.x, c.y, c.z, b.x, b.y, b.z];
-      n.negate();
-    }
-    for (const v of [a, b, c]) {
-      positions.push(v.x, v.y, v.z);
-      normals.push(n.x, n.y, n.z);
-    }
-  }
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
-  return geometry;
-}
-
-const at = (x, y, z) => new THREE.Matrix4().makeTranslation(x, y, z);
-const along = new THREE.Matrix4().makeRotationX(Math.PI / 2);
-const facingBack = new THREE.Matrix4().makeRotationY(Math.PI);
-
-// The destroyer: a dagger one unit long, nose at +z. The hull has walls along its edges, where the
-// trench runs; a second, narrower wedge rises along the spine; the superstructure steps up toward
-// the stern to the bridge tower; turbolaser batteries line both edges; greebles cover the deck;
-// and three main engines and two smaller ones burn astern.
-function destroyerGeometry() {
-  const nose = [0, 0.006, 0.5];
-  const keel = [0, -0.006, 0.5];
-  const leftTop = [-0.38, 0.014, -0.5];
-  const leftBottom = [-0.38, -0.014, -0.5];
-  const rightTop = [0.38, 0.014, -0.5];
-  const rightBottom = [0.38, -0.014, -0.5];
-  const ridge = [0, 0.075, -0.5];
-  const belly = [0, -0.05, -0.5];
-  const stern = [0, 0.004, -0.5];
-  const body = hull([
-    [nose, leftTop, ridge], [nose, ridge, rightTop],
-    [keel, belly, leftBottom], [keel, rightBottom, belly],
-    [nose, keel, leftBottom], [nose, leftBottom, leftTop],
-    [nose, rightTop, rightBottom], [nose, rightBottom, keel],
-    [stern, leftTop, ridge], [stern, ridge, rightTop], [stern, rightTop, rightBottom],
-    [stern, rightBottom, belly], [stern, belly, leftBottom], [stern, leftBottom, leftTop],
-  ], new THREE.Vector3(0, 0, -0.17));
-  const parts = [{ geometry: body, kind: 0 }];
-  // The dorsal wedge along the spine.
-  const spine = hull([
-    [[0, 0.03, 0.2], [-0.14, 0.05, -0.5], [0, 0.1, -0.5]], [[0, 0.03, 0.2], [0, 0.1, -0.5], [0.14, 0.05, -0.5]],
-    [[0, 0.03, 0.2], [0, 0.02, -0.5], [-0.14, 0.05, -0.5]], [[0, 0.03, 0.2], [0.14, 0.05, -0.5], [0, 0.02, -0.5]],
-    [[-0.14, 0.05, -0.5], [0, 0.02, -0.5], [0, 0.1, -0.5]], [[0, 0.1, -0.5], [0, 0.02, -0.5], [0.14, 0.05, -0.5]],
-  ], new THREE.Vector3(0, 0.05, -0.27));
-  parts.push({ geometry: spine, kind: 0 });
-  const box = (w, h, d, x, y, z, kind) => parts.push({ geometry: new THREE.BoxGeometry(w, h, d), matrix: at(x, y, z), kind });
-  // The superstructure, stepping up toward the stern.
-  box(0.3, 0.05, 0.3, 0, 0.09, -0.36, 3);
-  box(0.22, 0.045, 0.22, 0, 0.13, -0.4, 3);
-  box(0.15, 0.04, 0.15, 0, 0.165, -0.43, 3);
-  box(0.36, 0.02, 0.06, 0, 0.1, -0.24, 1);
-  box(0.045, 0.07, 0.05, 0, 0.215, -0.44, 1);
-  box(0.21, 0.028, 0.055, 0, 0.26, -0.44, 3);
-  box(0.004, 0.05, 0.004, 0.03, 0.3, -0.45, 1);
-  box(0.003, 0.035, 0.003, -0.025, 0.29, -0.45, 1);
-  for (const x of [-0.07, 0.07]) {
-    parts.push({ geometry: new THREE.SphereGeometry(0.02, 12, 10), matrix: at(x, 0.285, -0.44), kind: 1 });
-  }
-  // The deck: height of the upper hull at a point, so fittings sit on it.
-  const deck = (x, z) => {
-    const u = THREE.MathUtils.clamp(0.5 - z, 0, 1);
-    const half = Math.max(0.38 * u, 1e-3);
-    const crest = 0.006 + 0.069 * u;
-    const edge = 0.006 + 0.008 * u;
-    return crest + (edge - crest) * Math.min(1, Math.abs(x) / half);
-  };
-  // Turbolaser batteries along both edges.
-  for (let i = 0; i < 11; i++) {
-    const z = 0.28 - i * 0.07;
-    const u = 0.5 - z;
-    for (const s of [-1, 1]) {
-      const x = s * 0.38 * u * 0.78;
-      const y = deck(x, z);
-      parts.push({ geometry: new THREE.CylinderGeometry(0.009, 0.011, 0.008, 10), matrix: at(x, y + 0.004, z), kind: 1 });
-      box(0.004, 0.004, 0.022, x - 0.003, y + 0.009, z + 0.01, 1);
-      box(0.004, 0.004, 0.022, x + 0.003, y + 0.009, z + 0.01, 1);
-    }
-  }
-  // Greebles scattered over the deck, denser toward the stern.
-  for (let i = 0; i < 110; i++) {
-    const z = 0.35 - Math.pow(Math.random(), 0.7) * 0.8;
-    const u = 0.5 - z;
-    const x = (Math.random() * 2 - 1) * 0.38 * u * 0.85;
-    const w = 0.006 + Math.random() * 0.02;
-    const h = 0.002 + Math.random() * 0.008;
-    const d = 0.006 + Math.random() * 0.03;
-    box(w, h, d, x, deck(x, z) + h / 2, z, 1);
-  }
-  for (const [x, y, r] of [[-0.12, 0.0, 0.045], [0, 0.025, 0.05], [0.12, 0.0, 0.045]]) {
-    parts.push({ geometry: new THREE.CylinderGeometry(r, r * 1.15, 0.08, 24), matrix: at(x, y, -0.53).multiply(along), kind: 1 });
-    parts.push({ geometry: new THREE.CylinderGeometry(r * 0.8, r * 0.8, 0.012, 24), matrix: at(x, y, -0.57).multiply(along), kind: 1 });
-    parts.push({ geometry: new THREE.CircleGeometry(r * 0.78, 24), matrix: at(x, y, -0.5765).multiply(facingBack), kind: 2 });
-  }
-  for (const x of [-0.21, 0.21]) {
-    parts.push({ geometry: new THREE.CylinderGeometry(0.016, 0.018, 0.05, 12), matrix: at(x, 0.0, -0.52).multiply(along), kind: 1 });
-    parts.push({ geometry: new THREE.CircleGeometry(0.013, 12), matrix: at(x, 0.0, -0.5455).multiply(facingBack), kind: 2 });
-  }
-  return merge(parts);
-}
-
-// The fighter: a fuselage one unit long with a tapering nose, a canopy, four wings open in an X,
-// an engine at each wing root and a cannon at each tip.
-function fighterGeometry() {
-  const parts = [];
-  parts.push({ geometry: new THREE.BoxGeometry(0.12, 0.11, 0.55), matrix: at(0, 0, -0.2), kind: 0 });
-  const w = 0.06;
-  const h = 0.055;
-  const nose = hull([
-    [[-w, -h, 0.075], [w, -h, 0.075], [w, h, 0.075]], [[-w, -h, 0.075], [w, h, 0.075], [-w, h, 0.075]],
-    [[-w, h, 0.075], [w, h, 0.075], [0.02, 0.02, 0.5]], [[-w, h, 0.075], [0.02, 0.02, 0.5], [-0.02, 0.02, 0.5]],
-    [[-w, -h, 0.075], [0.02, -0.02, 0.5], [w, -h, 0.075]], [[-w, -h, 0.075], [-0.02, -0.02, 0.5], [0.02, -0.02, 0.5]],
-    [[w, -h, 0.075], [0.02, -0.02, 0.5], [0.02, 0.02, 0.5]], [[w, -h, 0.075], [0.02, 0.02, 0.5], [w, h, 0.075]],
-    [[-w, -h, 0.075], [-0.02, 0.02, 0.5], [-0.02, -0.02, 0.5]], [[-w, -h, 0.075], [-w, h, 0.075], [-0.02, 0.02, 0.5]],
-    [[-0.02, -0.02, 0.5], [-0.02, 0.02, 0.5], [0.02, 0.02, 0.5]], [[-0.02, -0.02, 0.5], [0.02, 0.02, 0.5], [0.02, -0.02, 0.5]],
-  ], new THREE.Vector3(0, 0, 0.22));
-  parts.push({ geometry: nose, kind: 4 });
-  parts.push({ geometry: new THREE.BoxGeometry(0.07, 0.045, 0.14), matrix: at(0, 0.07, -0.02), kind: 5 });
-  const open = 0.24;
-  for (const angle of [open, -open, Math.PI - open, Math.PI + open]) {
-    const turn = new THREE.Matrix4().makeRotationZ(angle);
-    parts.push({ geometry: new THREE.BoxGeometry(0.42, 0.012, 0.2), matrix: turn.clone().multiply(at(0.26, 0, -0.32)), kind: 4 });
-    parts.push({ geometry: new THREE.BoxGeometry(0.012, 0.012, 0.52), matrix: turn.clone().multiply(at(0.47, 0, -0.16)), kind: 1 });
-    parts.push({ geometry: new THREE.CylinderGeometry(0.03, 0.034, 0.22, 14), matrix: turn.clone().multiply(at(0.1, 0, -0.32)).multiply(along), kind: 1 });
-    parts.push({ geometry: new THREE.CircleGeometry(0.026, 14), matrix: turn.clone().multiply(at(0.1, 0, -0.4305)).multiply(facingBack), kind: 2 });
-  }
-  return merge(parts);
-}
+`;
 
 // The destroyer's plating, painted once per load on two canvases: plates of unequal size split
 // from the square, each its own shade, with grooves between them; greebles, vents and lit ports on
@@ -508,11 +374,10 @@ function orient(object, forward, up) {
   object.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(x, y, z));
 }
 
-const CLASSES = ['Imperial-class · 1,600 m', 'Victory-class · 900 m', 'Venator-class · 1,137 m', 'Interdictor · 1,129 m', 'Tector-class · 1,600 m', 'Resurgent-class · 2,916 m'];
-
-export function createFleet({ scene, camera, time, sunDir, sunColor, air, accent, reduceMotion, overlay, anisotropy = 1 }) {
+export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduceMotion, overlay, anisotropy = 1, random = Math.random }) {
   const [hullMap, detailMap] = hullMaps(anisotropy);
-  const shipMaterial = (hull, paint, engine, panels) => new THREE.ShaderMaterial({
+  const linear = (hex) => new THREE.Color(hex).convertSRGBToLinear();
+  const shipMaterial = (side, { textured = false, panels = 22, windows = 1, haze = 0 } = {}) => new THREE.ShaderMaterial({
     vertexShader: SHIP_VERTEX,
     fragmentShader: SHIP_FRAGMENT,
     uniforms: {
@@ -520,17 +385,17 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, accent
       uSunDir: sunDir,
       uSunColor: { value: sunColor },
       uAir: { value: air },
-      uHull: { value: new THREE.Color(hull).convertSRGBToLinear() },
-      uPaint: { value: new THREE.Color(paint).convertSRGBToLinear() },
-      uEngine: { value: new THREE.Color(engine).convertSRGBToLinear() },
+      uHull: { value: linear(side.hull) },
+      uPaint: { value: linear(side.paint) },
+      uEngine: { value: linear(side.engine) },
       uPanels: { value: new THREE.Vector2(panels, panels * 0.6) },
       uTime: time,
       uWarp: { value: 0 },
       uFade: { value: 0 },
       uBoost: { value: 0 },
-      uWindows: { value: 1 },
-      uHaze: { value: 0 },
-      uTextured: { value: 0 },
+      uWindows: { value: windows },
+      uHaze: { value: haze },
+      uTextured: { value: textured ? 1 : 0 },
       uHullMap: { value: hullMap },
       uDetailMap: { value: detailMap },
       uMapScale: { value: 2.4 },
@@ -541,69 +406,108 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, accent
     side: THREE.DoubleSide,
   });
 
-  // The destroyer.
-  const destroyer = new THREE.Group();
-  const destroyerMaterial = shipMaterial('#7a7f87', '#7a7f87', '#9fd8ff', 30);
-  destroyerMaterial.uniforms.uHaze.value = 0.1;
-  destroyerMaterial.uniforms.uTextured.value = 1;
-  const destroyerMesh = new THREE.Mesh(destroyerGeometry(), destroyerMaterial);
-  // The hull's extremes, which the contact brackets fit: nose, stern corners, keel, mast, engines.
-  const hullCorners = [[0, 0, 0.5], [-0.38, 0, -0.5], [0.38, 0, -0.5], [0, -0.05, -0.5], [0, 0.33, -0.45], [-0.11, 0.26, -0.44], [0.11, 0.26, -0.44], [-0.12, 0, -0.58], [0.12, 0, -0.58], [0, 0.07, -0.58]].map((point) => new THREE.Vector3(...point));
-  destroyerMesh.frustumCulled = false;
-  destroyer.add(destroyerMesh);
-  const lightPositions = [-0.375, 0.0, -0.49, 0.375, 0.0, -0.49, 0.03, 0.33, -0.45, 0, 0.012, 0.495];
-  const lightColors = [1, 0.15, 0.1, 0.2, 1, 0.35, 1, 1, 1, 1, 1, 1];
-  const lightPhases = [-1, -1, 0.5, 2.6];
-  const lightGeometry = new THREE.BufferGeometry();
-  lightGeometry.setAttribute('position', new THREE.Float32BufferAttribute(lightPositions, 3));
-  lightGeometry.setAttribute('aColor', new THREE.Float32BufferAttribute(lightColors, 3));
-  lightGeometry.setAttribute('aPhase', new THREE.Float32BufferAttribute(lightPhases, 1));
-  const lightUniforms = { uTime: time, uSize: { value: 6 }, uShow: { value: 0 } };
-  const lights = new THREE.Points(lightGeometry, new THREE.ShaderMaterial({
-    vertexShader: LIGHT_VERTEX,
-    fragmentShader: LIGHT_FRAGMENT,
-    uniforms: lightUniforms,
+  const scenario = pickScenario(random);
+  const sides = scenario.sides.map((key) => ({ key, ...FACTIONS[key] }));
+
+  // Running lights: red to port, green to starboard, white strobes on the rest.
+  function runningLights(positions) {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions.flat(), 3));
+    geometry.setAttribute('aColor', new THREE.Float32BufferAttribute(positions.flatMap((_, i) => (i === 0 ? [1, 0.15, 0.1] : i === 1 ? [0.2, 1, 0.35] : [1, 1, 1])), 3));
+    geometry.setAttribute('aPhase', new THREE.Float32BufferAttribute(positions.map((_, i) => (i < 2 ? -1 : 0.5 + i * 2.1)), 1));
+    const uniforms = { uTime: time, uSize: { value: 6 }, uShow: { value: 0 } };
+    const points = new THREE.Points(geometry, new THREE.ShaderMaterial({
+      vertexShader: LIGHT_VERTEX,
+      fragmentShader: LIGHT_FRAGMENT,
+      uniforms,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    }));
+    points.frustumCulled = false;
+    return { points, uniforms };
+  }
+
+  // Capital ships: one of each hull the sides fly, built once. Each visit picks one.
+  const capitals = [];
+  for (const side of sides) {
+    for (const [kind, label] of side.capitals) {
+      let ship = capitals.find((entry) => entry.side === side && entry.kind === kind);
+      if (!ship) {
+        const design = buildCapital(kind, random);
+        const material = shipMaterial(side, { textured: true, panels: 30, haze: 0.1 });
+        const mesh = new THREE.Mesh(design.geometry, material);
+        mesh.frustumCulled = false;
+        const group = new THREE.Group();
+        group.add(mesh);
+        const lights = runningLights(design.lights);
+        group.add(lights.points);
+        group.visible = false;
+        scene.add(group);
+        ship = { side, kind, design, material, group, lights, labels: [] };
+        capitals.push(ship);
+      }
+      ship.labels.push(label);
+    }
+  }
+
+  // Fighters: a pair of each type each side flies, each with a trail from every engine.
+  const fighterDesigns = new Map();
+  const pools = new Map();
+  for (const side of sides) {
+    for (const kind of side.fighters) {
+      if (!fighterDesigns.has(kind)) fighterDesigns.set(kind, buildFighter(kind));
+      const design = fighterDesigns.get(kind);
+      pools.set(`${side.key}:${kind}`, [0, 1].map(() => {
+        const material = shipMaterial(side, { windows: 0 });
+        const mesh = new THREE.Mesh(design.geometry, material);
+        mesh.frustumCulled = false;
+        const group = new THREE.Group();
+        group.add(mesh);
+        group.visible = false;
+        scene.add(group);
+        const trails = design.engines.map(() => {
+          const geometry = new THREE.BufferGeometry();
+          geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(96 * 3), 3));
+          geometry.setAttribute('aAlpha', new THREE.BufferAttribute(new Float32Array(96), 1));
+          geometry.setDrawRange(0, 0);
+          const line = new THREE.Line(geometry, new THREE.ShaderMaterial({
+            vertexShader: LINE_VERTEX,
+            fragmentShader: LINE_FRAGMENT,
+            uniforms: { uColor: { value: linear(side.engine).multiplyScalar(2.2) } },
+            transparent: true,
+            depthWrite: false,
+            blending: THREE.AdditiveBlending,
+          }));
+          line.frustumCulled = false;
+          scene.add(line);
+          return { line, samples: [] };
+        });
+        return { side, design, group, material, trails, nextShot: 0, cannon: 0 };
+      }));
+    }
+  }
+  const allFighters = [...pools.values()].flat();
+
+  // Laser bolts, fired only in a dogfight, at the ships being chased.
+  const BOLTS = 40;
+  const boltGeometry = new THREE.BufferGeometry();
+  boltGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(BOLTS * 6), 3));
+  boltGeometry.setAttribute('aAlpha', new THREE.BufferAttribute(new Float32Array(BOLTS * 2), 1));
+  boltGeometry.setAttribute('aColor', new THREE.BufferAttribute(new Float32Array(BOLTS * 6), 3));
+  const boltLines = new THREE.LineSegments(boltGeometry, new THREE.ShaderMaterial({
+    vertexShader: BOLT_VERTEX,
+    fragmentShader: BOLT_FRAGMENT,
     transparent: true,
     depthWrite: false,
     blending: THREE.AdditiveBlending,
   }));
-  lights.frustumCulled = false;
-  destroyer.add(lights);
-  destroyer.visible = false;
-  scene.add(destroyer);
+  boltLines.frustumCulled = false;
+  scene.add(boltLines);
+  const bolts = Array.from({ length: BOLTS }, () => ({ age: Infinity, position: new THREE.Vector3(), direction: new THREE.Vector3(), color: new THREE.Color() }));
+  let nextBolt = 0;
 
-  // The fighters, each with a trail from either side of its engines.
-  const fighterGeo = fighterGeometry();
-  const fighters = [0, 1].map(() => {
-    const group = new THREE.Group();
-    const material = shipMaterial('#c9ccd1', '#b8321f', '#ff7a52', 22);
-    material.uniforms.uWindows.value = 0;
-    const mesh = new THREE.Mesh(fighterGeo, material);
-    mesh.frustumCulled = false;
-    group.add(mesh);
-    group.visible = false;
-    scene.add(group);
-    const trails = [0, 1].map(() => {
-      const geometry = new THREE.BufferGeometry();
-      geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(96 * 3), 3));
-      geometry.setAttribute('aAlpha', new THREE.BufferAttribute(new Float32Array(96), 1));
-      geometry.setDrawRange(0, 0);
-      const line = new THREE.Line(geometry, new THREE.ShaderMaterial({
-        vertexShader: LINE_VERTEX,
-        fragmentShader: LINE_FRAGMENT,
-        uniforms: { uColor: { value: new THREE.Color('#ff7a52').convertSRGBToLinear().multiplyScalar(2.2) } },
-        transparent: true,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending,
-      }));
-      line.frustumCulled = false;
-      scene.add(line);
-      return { line, samples: [] };
-    });
-    return { group, material, trails };
-  });
-
-  // The contact brackets: the destroyer is tracked like a target on a scope.
+  // The contact brackets: a capital ship is tracked like a target on a scope.
   const contact = document.createElement('div');
   contact.className = 'r3-contact';
   contact.setAttribute('aria-hidden', 'true');
@@ -624,46 +528,57 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, accent
     return out.set((p.x * 0.5 + 0.5) * view.width, (0.5 - p.y * 0.5) * view.height, p.z);
   }
 
-  // The destroyer's visit: arrive, cruise, charge, leave, then wait.
-  const visit = { state: 'waiting', until: reduceMotion ? 0 : 2.5, start: new THREE.Vector3(), velocity: new THREE.Vector3(), heading: new THREE.Vector3(), up: new THREE.Vector3(), length: 1, cruise: 30, age: 0, label: CLASSES[0] };
+  // A capital ship's visit: arrive, cruise, charge, leave, then wait.
+  const visit = { state: 'waiting', until: reduceMotion ? 0 : 2.5, start: new THREE.Vector3(), velocity: new THREE.Vector3(), heading: new THREE.Vector3(), up: new THREE.Vector3(), length: 1, cruise: 30, age: 0, count: 0, ship: capitals[0] };
   function planVisit() {
     const { width, height, free, narrow } = view;
+    // At war the sides take turns; either way the ship is one its side flies.
+    // ?ship=organicCruiser asks for a hull by name, where a side flies one.
+    const asked = capitals.filter((entry) => entry.kind === new URLSearchParams(location.search).get('ship'));
+    const side = asked.length ? asked[0].side : sides[visit.count % sides.length];
+    const fleet = asked.length ? asked : capitals.filter((entry) => entry.side === side);
+    const ship = fleet[Math.floor(random() * fleet.length)];
+    visit.count += 1;
+    for (const entry of capitals) entry.group.visible = false;
+    visit.ship = ship;
     // As long as a third of the free sky, within reason; the hull's centre keeps half its length
-    // clear of the text and the hero's edges.
-    // On a phone the text fills the hero, so the destroyer keeps low and small, over the planet's
-    // limb beside the status strip.
+    // clear of the text and the hero's edges. On a phone the text fills the hero, so the ship keeps
+    // low and small, over the planet's limb beside the status strip.
     const start = narrow ? width * 0.46 : Math.max(free + 30, width * 0.45);
     const lengthPx = narrow ? Math.min(width * 0.26, 100) : THREE.MathUtils.clamp((width - start) * 0.42, 180, 340);
     const leftEdge = start + lengthPx * 0.55;
     const rightEdge = width - 24 - lengthPx * 0.7;
     const span = Math.max(rightEdge - leftEdge, 40);
-    const direction = Math.random() < 0.6 ? -1 : 1;
-    const x = direction < 0 ? leftEdge + span * (0.7 + 0.3 * Math.random()) : leftEdge + span * (0.3 * Math.random());
-    const y = narrow ? height * (0.74 + 0.05 * Math.random()) : THREE.MathUtils.clamp(height * (0.22 + 0.16 * Math.random()), lengthPx * 0.32 + 12, height * 0.55);
-    const depth = -7 - Math.random() * 4;
+    const direction = random() < 0.6 ? -1 : 1;
+    const x = direction < 0 ? leftEdge + span * (0.7 + 0.3 * random()) : leftEdge + span * (0.3 * random());
+    const y = narrow ? height * (0.74 + 0.05 * random()) : THREE.MathUtils.clamp(height * (0.22 + 0.16 * random()), lengthPx * 0.32 + 12, height * 0.55);
+    const depth = -7 - random() * 4;
     worldAt(x, y, depth, visit.start);
     visit.length = (lengthPx / height) * 2 * (10 - depth) * tanHalf;
-    visit.cruise = reduceMotion ? 30 : 26 + Math.random() * 12;
-    const travelPx = span * (0.55 + 0.15 * Math.random());
+    visit.cruise = reduceMotion ? 30 : 26 + random() * 12;
+    const travelPx = span * (0.55 + 0.15 * random());
     const travel = (travelPx / height) * 2 * (10 - depth) * tanHalf;
-    visit.velocity.set(direction * travel, (Math.random() - 0.5) * travel * 0.08, 0).divideScalar(visit.cruise);
+    visit.velocity.set(direction * travel, (random() - 0.5) * travel * 0.08, 0).divideScalar(visit.cruise);
     // The hull points where it goes, turned a little toward the viewer so the deck shows.
     visit.heading.copy(visit.velocity).normalize();
     visit.heading.z += 0.25;
     visit.heading.normalize();
-    visit.up.set((Math.random() - 0.5) * 0.3, 1, 0.3).normalize();
-    visit.label = CLASSES[Math.floor(Math.random() * CLASSES.length)];
-    contactLabel.textContent = `Contact ▸ ${visit.label}`;
+    visit.up.set((random() - 0.5) * 0.3, 1, 0.3).normalize();
+    contactLabel.textContent = `${ship.side.name} ▸ ${ship.labels[Math.floor(random() * ship.labels.length)]}`;
   }
 
-  // The fighters' passes.
-  const pass = { active: false, age: 0, duration: 3.4, next: reduceMotion ? Infinity : 5 + Math.random() * 4, points: [] };
+  // The fighters' passes: a patrol of one side, or at war a dogfight, one side chased by the other.
+  const pass = { active: false, age: 0, duration: 3.4, next: reduceMotion ? Infinity : 5 + random() * 4, points: [], flights: [] };
+  function pairOf(side) {
+    const kind = side.fighters[Math.floor(random() * side.fighters.length)];
+    return pools.get(`${side.key}:${kind}`);
+  }
   function planPass() {
     const { width, height, free, narrow } = view;
     const left = narrow ? width * 0.5 : Math.max(free + 40, width * 0.48);
     const right = width * 0.98;
     const mid = (left + right) / 2;
-    const kind = Math.floor(Math.random() * 3);
+    const kind = Math.floor(random() * 3);
     let screen;
     if (kind === 0) {
       // A dive: from beside the viewer down toward the planet's limb.
@@ -676,10 +591,19 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, accent
       screen = [[right + 80, height * 0.3, -1], [right - (right - left) * 0.25, height * 0.12, -3], [left + (right - left) * 0.35, height * 0.35, -9], [left, height * 0.18, -24]];
     }
     pass.points = screen.map(([x, y, z]) => worldAt(x, y, z));
-    pass.duration = 3.0 + Math.random() * 1.2;
+    pass.duration = 3.0 + random() * 1.2;
     pass.age = 0;
     pass.active = true;
-    for (const fighter of fighters) {
+    const dogfight = scenario.war && random() < 0.7;
+    const leaders = dogfight ? sides[Math.floor(random() * sides.length)] : sides[0];
+    pass.flights = [{ fighters: pairOf(leaders), delay: 0, chasing: null }];
+    if (dogfight) {
+      const pursuers = sides.find((side) => side !== leaders);
+      pass.flights.push({ fighters: pairOf(pursuers), delay: 0.5 + random() * 0.2, chasing: pass.flights[0].fighters });
+      pass.duration += 0.4;
+    }
+    for (const fighter of allFighters) {
+      fighter.group.visible = false;
       for (const trail of fighter.trails) trail.samples.length = 0;
     }
   }
@@ -693,6 +617,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, accent
   const side = new THREE.Vector3();
   const upWorld = new THREE.Vector3(0, 1, 0);
   const localPoint = new THREE.Vector3();
+  const aim = new THREE.Vector3();
   let clock = 0;
 
   function flashAt(point, strength, size) {
@@ -703,8 +628,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, accent
     flash.size = size;
   }
 
-  function updateDestroyer(dt) {
-    const uniforms = destroyerMaterial.uniforms;
+  function updateCapital(dt) {
     if (reduceMotion && visit.state === 'waiting') {
       planVisit();
       visit.state = 'cruising';
@@ -712,7 +636,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, accent
     }
     visit.age += dt;
     if (visit.state === 'waiting') {
-      destroyer.visible = false;
+      for (const entry of capitals) entry.group.visible = false;
       contact.classList.remove('is-locked');
       if (clock >= visit.until) {
         planVisit();
@@ -722,7 +646,9 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, accent
         return;
       }
     }
-    destroyer.visible = true;
+    const ship = visit.ship;
+    const uniforms = ship.material.uniforms;
+    ship.group.visible = true;
     let stretch = 1;
     let anchor = 0;
     let warp = 0;
@@ -736,7 +662,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, accent
       warp = Math.pow(1 - a, 1.5);
       fade = Math.min(1, a * 6);
       if (a >= 1) {
-        flashAt(localPoint.set(0, 0, 0.5).multiplyScalar(visit.length).applyQuaternion(destroyer.quaternion).add(visit.start), 1.4, 1);
+        flashAt(localPoint.set(0, 0, 0.5).multiplyScalar(visit.length).applyQuaternion(ship.group.quaternion).add(visit.start), 1.4, 1);
         visit.state = 'cruising';
         visit.age = 0;
       }
@@ -758,33 +684,33 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, accent
       boost = 1;
       if (l >= 1) {
         visit.state = 'waiting';
-        visit.until = clock + 7 + Math.random() * 9;
-        destroyer.visible = false;
+        visit.until = clock + 7 + random() * 9;
+        ship.group.visible = false;
       }
     }
-    destroyer.position.copy(position);
-    destroyer.scale.setScalar(visit.length);
-    orient(destroyer, visit.heading, visit.up);
-    uniforms.uRotation.value.setFromMatrix4(new THREE.Matrix4().makeRotationFromQuaternion(destroyer.quaternion));
+    ship.group.position.copy(position);
+    ship.group.scale.setScalar(visit.length);
+    orient(ship.group, visit.heading, visit.up);
+    uniforms.uRotation.value.setFromMatrix4(new THREE.Matrix4().makeRotationFromQuaternion(ship.group.quaternion));
     uniforms.uStretch.value = stretch;
     uniforms.uAnchor.value = anchor;
     uniforms.uWarp.value = warp;
     uniforms.uFade.value = fade;
     uniforms.uBoost.value = boost;
-    lightUniforms.uShow.value = warp < 0.05 && visit.state === 'cruising' ? 1 : 0;
-    lightUniforms.uSize.value = Math.max(3, (visit.length / (2 * (10 - position.z) * tanHalf)) * view.height * 0.035) * view.ratio;
+    ship.lights.uniforms.uShow.value = warp < 0.05 && visit.state === 'cruising' ? 1 : 0;
+    ship.lights.uniforms.uSize.value = Math.max(3, (visit.length / (2 * (10 - position.z) * tanHalf)) * view.height * 0.035) * view.ratio;
 
     // The brackets: the hull's bounds as the camera sees them, locked on while it cruises and
     // closing in over half a second after it arrives.
     if (visit.state === 'cruising') {
-      destroyer.updateMatrixWorld(true);
+      ship.group.updateMatrixWorld(true);
       camera.updateMatrixWorld();
       let left = Infinity;
       let top = Infinity;
       let right = -Infinity;
       let bottom = -Infinity;
-      for (const corner of hullCorners) {
-        screenOf(localPoint.copy(corner).applyMatrix4(destroyer.matrixWorld), screen);
+      for (const corner of ship.design.extremes) {
+        screenOf(localPoint.copy(corner).applyMatrix4(ship.group.matrixWorld), screen);
         left = Math.min(left, screen.x);
         right = Math.max(right, screen.x);
         top = Math.min(top, screen.y);
@@ -808,7 +734,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, accent
   }
 
   function drawTrails() {
-    for (const fighter of fighters) {
+    for (const fighter of allFighters) {
       for (const trail of fighter.trails) {
         const positions = trail.line.geometry.getAttribute('position');
         const alphas = trail.line.geometry.getAttribute('aAlpha');
@@ -823,54 +749,102 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, accent
     }
   }
 
+  // A pursuer fires from its next cannon at where its quarry will be, a little off.
+  function fire(fighter, quarry, quarryVelocity) {
+    fighter.group.updateMatrixWorld(true);
+    const cannons = fighter.design.cannons;
+    const bolt = bolts[nextBolt];
+    nextBolt = (nextBolt + 1) % BOLTS;
+    bolt.age = 0;
+    bolt.position.set(...cannons[fighter.cannon % cannons.length]).applyMatrix4(fighter.group.matrixWorld);
+    fighter.cannon += 1;
+    aim.copy(quarry.group.position).addScaledVector(quarryVelocity, 0.12).sub(bolt.position);
+    if (aim.lengthSq() < 1e-6) return;
+    aim.normalize();
+    aim.x += (random() - 0.5) * 0.05;
+    aim.y += (random() - 0.5) * 0.05;
+    bolt.direction.copy(aim.normalize());
+    bolt.color.set(fighter.side.laser).convertSRGBToLinear();
+  }
+
+  function updateBolts(dt) {
+    const positions = boltGeometry.getAttribute('position');
+    const alphas = boltGeometry.getAttribute('aAlpha');
+    const colors = boltGeometry.getAttribute('aColor');
+    bolts.forEach((bolt, i) => {
+      bolt.age += dt;
+      const alive = bolt.age < 0.5;
+      if (alive) bolt.position.addScaledVector(bolt.direction, 48 * dt);
+      const tail = tmp.copy(bolt.position).addScaledVector(bolt.direction, -0.5);
+      positions.setXYZ(i * 2, bolt.position.x, bolt.position.y, bolt.position.z);
+      positions.setXYZ(i * 2 + 1, tail.x, tail.y, tail.z);
+      const alpha = alive ? 1 - bolt.age / 0.5 : 0;
+      alphas.setX(i * 2, alpha);
+      alphas.setX(i * 2 + 1, alpha * 0.35);
+      colors.setXYZ(i * 2, bolt.color.r, bolt.color.g, bolt.color.b);
+      colors.setXYZ(i * 2 + 1, bolt.color.r, bolt.color.g, bolt.color.b);
+    });
+    positions.needsUpdate = true;
+    alphas.needsUpdate = true;
+    colors.needsUpdate = true;
+  }
+
+  const velocities = new Map();
   function updateFighters(dt) {
     if (!pass.active) {
-      for (const fighter of fighters) fighter.group.visible = false;
+      for (const fighter of allFighters) fighter.group.visible = false;
       if (clock >= pass.next) planPass();
       else return;
     }
     pass.age += dt;
     const [p0, p1, p2, p3] = pass.points;
-    fighters.forEach((fighter, index) => {
-      const delay = index * 0.16;
-      const s = Math.min(1, Math.max(0, (pass.age - delay) / pass.duration));
-      const eased = s * s * (3 - 2 * s) * 0.35 + s * 0.65;
-      bezier(p0, p1, p2, p3, eased, tmp);
-      bezierTangent(p0, p1, p2, p3, eased, tangent);
-      bezierTangent(p0, p1, p2, p3, Math.min(1, eased + 0.02), nextTangent);
-      // Bank into the turn: the heading's swing to one side rolls the wings that way.
-      const heading = tangent.clone().normalize();
-      const swing = nextTangent.clone().normalize().sub(heading);
-      side.crossVectors(upWorld, heading);
-      if (side.lengthSq() < 1e-6) side.set(1, 0, 0);
-      side.normalize();
-      const roll = THREE.MathUtils.clamp(swing.dot(side) * 40, -1.1, 1.1) + (index ? 0.15 : -0.1);
-      up.copy(upWorld).applyAxisAngle(heading, roll);
-      if (index === 1) {
-        // The wingman keeps station off the leader's right and a little low.
+    for (const flight of pass.flights) {
+      flight.fighters.forEach((fighter, index) => {
+        const delay = flight.delay + index * 0.16;
+        const s = Math.min(1, Math.max(0, (pass.age - delay) / pass.duration));
+        const eased = s * s * (3 - 2 * s) * 0.35 + s * 0.65;
+        bezier(p0, p1, p2, p3, eased, tmp);
+        bezierTangent(p0, p1, p2, p3, eased, tangent);
+        bezierTangent(p0, p1, p2, p3, Math.min(1, eased + 0.02), nextTangent);
+        velocities.set(fighter, tangent.clone().divideScalar(pass.duration));
+        // Bank into the turn: the heading's swing to one side rolls the wings that way.
+        const heading = tangent.clone().normalize();
+        const swing = nextTangent.clone().normalize().sub(heading);
+        side.crossVectors(upWorld, heading);
+        if (side.lengthSq() < 1e-6) side.set(1, 0, 0);
+        side.normalize();
+        const roll = THREE.MathUtils.clamp(swing.dot(side) * 40, -1.1, 1.1) + (index ? 0.15 : -0.1) + (flight.chasing ? 0.25 * Math.sin(clock * 3 + index) : 0);
+        up.copy(upWorld).applyAxisAngle(heading, roll);
+        // The wingman keeps station off the leader's right and a little low; a pursuer weaves.
         const right = new THREE.Vector3().crossVectors(heading, up).normalize();
-        tmp.addScaledVector(right, -0.9).addScaledVector(up, -0.3);
-      }
-      fighter.group.position.copy(tmp);
-      fighter.group.scale.setScalar(0.55);
-      orient(fighter.group, heading, up);
-      fighter.group.visible = s > 0 && s < 1;
-      const fade = Math.min(1, s * 12) * (1 - THREE.MathUtils.smoothstep(s, 0.86, 1.0));
-      fighter.material.uniforms.uFade.value = fade;
-      fighter.material.uniforms.uBoost.value = 0.4;
-      if (fighter.group.visible) {
+        if (index === 1) tmp.addScaledVector(right, -0.9).addScaledVector(up, -0.3);
+        if (flight.chasing) tmp.addScaledVector(right, 0.35 * Math.sin(clock * 2.2 + index * 2)).addScaledVector(up, 0.25 * Math.cos(clock * 1.7 + index));
+        fighter.group.position.copy(tmp);
+        fighter.group.scale.setScalar(0.55);
+        orient(fighter.group, heading, up);
+        fighter.group.visible = s > 0 && s < 1;
+        const fade = Math.min(1, s * 12) * (1 - THREE.MathUtils.smoothstep(s, 0.86, 1.0));
+        fighter.material.uniforms.uFade.value = fade;
+        fighter.material.uniforms.uBoost.value = 0.4;
+        if (!fighter.group.visible) return;
         fighter.group.updateMatrixWorld(true);
-        for (const [trailIndex, x] of [[0, 0.1], [1, -0.1]]) trailSample(fighter, trailIndex, localPoint.set(x, 0, -0.44).applyMatrix4(fighter.group.matrixWorld));
-      }
-    });
-    if (pass.age > pass.duration + 0.9) {
+        fighter.design.engines.forEach((engine, trailIndex) => trailSample(fighter, trailIndex, localPoint.set(...engine).applyMatrix4(fighter.group.matrixWorld)));
+        // A pursuer fires in bursts at its quarry while both are well in view.
+        if (flight.chasing && s > 0.12 && s < 0.8 && clock >= fighter.nextShot) {
+          const quarry = flight.chasing[index % flight.chasing.length];
+          if (quarry.group.visible) fire(fighter, quarry, velocities.get(quarry) || tangent);
+          fighter.nextShot = clock + (fighter.cannon % 4 === 3 ? 0.45 : 0.11);
+        }
+      });
+    }
+    if (pass.age > pass.duration + 1.4) {
       pass.active = false;
-      pass.next = clock + 9 + Math.random() * 9;
+      pass.next = clock + 9 + random() * 9;
     }
   }
 
   return {
-    // The star calls the fleet: the destroyer drops out of hyperspace now, or if it is already
+    // The star calls the fleet: a capital ship drops out of hyperspace now, or if one is already
     // here it jumps away, and the fighters make a pass if they are not making one.
     summon() {
       if (reduceMotion) return;
@@ -886,8 +860,9 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, accent
     update(dt) {
       clock += dt;
       flash.strength = Math.max(0, flash.strength - dt * 3.2);
-      updateDestroyer(dt);
+      updateCapital(dt);
       updateFighters(dt);
+      updateBolts(dt);
       drawTrails();
       return flash;
     },

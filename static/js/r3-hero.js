@@ -860,7 +860,7 @@ function start(hero, art) {
     side: THREE.DoubleSide,
   }));
   pivot.add(jewel);
-  const fleet = createFleet({ scene, camera, time, sunDir, sunColor, air, accent, reduceMotion, overlay: art || hero, anisotropy: renderer.capabilities.getMaxAnisotropy() });
+  const fleet = createFleet({ scene, camera, time, sunDir, sunColor, air, reduceMotion, overlay: art || hero, anisotropy: renderer.capabilities.getMaxAnisotropy(), random: world.random });
 
   const brightMaterial = fullscreenMaterial(BRIGHT_FRAGMENT, { tInput: { value: sceneTarget.texture }, uThreshold: { value: 1.1 } });
   const blurMaterial = fullscreenMaterial(BLUR_FRAGMENT, { tInput: { value: null }, uDirection: { value: new THREE.Vector2() } });
