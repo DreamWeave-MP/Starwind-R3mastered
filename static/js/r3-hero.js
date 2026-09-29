@@ -39,6 +39,9 @@ function token(name, fallback) {
   return color.convertSRGBToLinear();
 }
 
+// The planet's turn, radians a second.
+const PLANET_SPIN = 0.03;
+
 const FULLSCREEN_VERTEX = /* glsl */ `
   varying vec2 vUv;
   void main() {
@@ -150,7 +153,8 @@ const SKY_FRAGMENT = /* glsl */ `
   uniform vec3 uPlanet;      // centre x, y and radius, in device pixels
   uniform vec3 uSunDir;      // towards the sun, view space: x right, y up, z to the viewer
   uniform vec3 uSunColor;
-  uniform float uSpin;
+  uniform mat3 uBody;       // view space to the planet's turning surface
+  uniform mat3 uCloudBody;  // the same for the cloud deck, which turns a little faster
   uniform vec3 uAccent;
   uniform vec3 uNight;
   uniform vec3 uOcean;
@@ -158,15 +162,21 @@ const SKY_FRAGMENT = /* glsl */ `
   uniform vec3 uAir;
   ${NOISE}
 
-  vec3 rotateY(vec3 p, float a) {
-    float c = cos(a);
-    float s = sin(a);
-    return vec3(c * p.x + s * p.z, p.y, -s * p.x + c * p.z);
-  }
-  vec3 rotateX(vec3 p, float a) {
-    float c = cos(a);
-    float s = sin(a);
-    return vec3(p.x, c * p.y - s * p.z, s * p.y + c * p.z);
+  // City lights: one in some cells of a lattice through the surface, clustered where the land is
+  // populous. A light counts when it lies near the surface, and is measured along it, so every
+  // one that counts is a sharp point rather than a blur sliced at some depth.
+  float cityLights(vec3 t) {
+    vec3 g = t * 55.0;
+    vec3 id = floor(g);
+    vec3 f = fract(g) - 0.5;
+    float h = hash31(id + 13.1);
+    if (h > 0.4) return 0.0;
+    vec3 offset = (vec3(hash31(id + 1.7), hash31(id + 4.3), hash31(id + 8.9)) - 0.5) * 0.35;
+    vec3 d = f - offset;
+    float depth = dot(d, t);
+    if (abs(depth) > 0.3) return 0.0;
+    vec3 along = d - t * depth;
+    return exp(-dot(along, along) / 0.016) * (0.45 + 0.55 * hash31(id + 2.2));
   }
 
   // Pinpoints in hashed cells, one layer per call; a few bright ones carry the four-pointed spikes
@@ -222,9 +232,10 @@ const SKY_FRAGMENT = /* glsl */ `
       if (r < 1.0) {
         float z = sqrt(max(0.0, 1.0 - r * r));
         vec3 n = vec3(q, z);
-        vec3 t = rotateX(rotateY(n, uSpin), 0.42);
+        vec3 t = uBody * n;
+        vec3 tc = uCloudBody * n;
         float land = smoothstep(0.53, 0.6, fbm3(t * 2.1 + 4.0));
-        float cloud = fbm3(t * vec3(3.2, 7.5, 3.2) + vec3(uTime * 0.012, 0.0, 0.0));
+        float cloud = fbm3(tc * vec3(3.2, 7.5, 3.2) + vec3(uTime * 0.006, 0.0, 0.0));
         cloud = smoothstep(0.52, 0.78, cloud);
         vec3 albedo = mix(uOcean, uLand * (0.8 + 0.4 * fbm3(t * 9.0)), land);
         albedo = mix(albedo, vec3(0.82, 0.93, 1.0), cloud * 0.85);
@@ -241,13 +252,20 @@ const SKY_FRAGMENT = /* glsl */ `
         float glint = pow(max(dot(n, h), 0.0), 220.0) * 4.0 + pow(max(dot(n, h), 0.0), 24.0) * 0.12;
         lit += uSunColor * glint * water * day;
 
-        // The night side: the planet's own dark teal, lit faintly by the cyan nebula above it.
-        vec3 night = uNight * (0.7 + 0.5 * n.y) + uAccent * 0.012 * (1.0 - land);
+        // The night side: the planet's own dark teal, with its continents and cloud lit faintly by
+        // the cyan nebula above, and the cities of the populous land glittering, so the turning
+        // shows on the dark as well as in the crescent. The lights fade where the limb would
+        // squeeze them thinner than a pixel.
+        vec3 nebulaLight = uAccent * 0.22 * max(dot(n, vec3(0.2, 0.75, 0.63)), 0.0);
+        vec3 night = uNight * (0.35 + 0.3 * n.y) + albedo * nebulaLight;
+        float populous = smoothstep(0.4, 0.6, fbm3(t * 5.0 + 11.0));
+        float cities = cityLights(t) * land * populous * (1.0 - 0.85 * cloud) * smoothstep(0.06, 0.3, z);
+        night += vec3(1.0, 0.72, 0.42) * cities * 1.25;
         vec3 surface = mix(night, lit, day);
 
         // Haze thickening towards the limb, lit where the air is.
-        float haze = pow(1.0 - z, 2.4);
-        surface += uAir * haze * (airLit * 0.25 + mie * 0.5);
+        float haze = pow(1.0 - z, 5.0);
+        surface += uAir * haze * (airLit * 0.18 + mie * 0.5);
         col = mix(col, surface, onPlanet);
       }
 
@@ -606,7 +624,8 @@ function start(hero, art) {
     uPlanet: { value: new THREE.Vector3(0, 0, 100) },
     uSunDir: sunDir,
     uSunColor: { value: sunColor },
-    uSpin: { value: 0 },
+    uBody: { value: new THREE.Matrix3() },
+    uCloudBody: { value: new THREE.Matrix3() },
     uAccent: { value: accent },
     uNight: { value: night },
     uOcean: { value: ocean },
@@ -684,6 +703,8 @@ function start(hero, art) {
   let slowTime = 0;
   let narrow = false;
   const jewelPx = { x: 0, y: 0, radius: 1 };
+  const alignAxis = new THREE.Matrix4().makeRotationFromQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0.1, 0.35, 1).normalize(), new THREE.Vector3(0, 1, 0)));
+  const spinMatrix = new THREE.Matrix4();
   const planet = { x: 0, y: 0, radius: 1 };
   let sunAlong = 0;
   const anchor = new THREE.Vector3();
@@ -723,16 +744,16 @@ function start(hero, art) {
       jewelPx.x = width - jewelPx.radius * 1.35;
       jewelPx.y = jewelPx.radius * 1.45;
       planet.radius = Math.max(width * 1.05, 420);
-      planet.x = width * 0.98;
-      planet.y = -planet.radius + height * 0.14;
-      sunAlong = THREE.MathUtils.clamp((width * 0.84 - planet.x) / planet.radius, -0.7, 0.7);
+      planet.x = width * 0.62;
+      planet.y = -planet.radius + height * 0.15;
+      sunAlong = THREE.MathUtils.clamp((width * 0.97 - planet.x) / planet.radius, -0.7, 0.7);
     } else {
       jewelPx.radius = radius;
       jewelPx.x = Math.min(textRight + free * 0.45, shellRight - radius * 1.3);
       jewelPx.y = height * 0.4;
-      planet.radius = Math.max(width * 0.42, 520);
+      planet.radius = Math.max(width * 0.36, 480);
       planet.x = jewelPx.x + radius * 0.6;
-      planet.y = -planet.radius + height * 0.24;
+      planet.y = -planet.radius + height * 0.3;
       sunAlong = THREE.MathUtils.clamp((Math.min(width - 90, jewelPx.x + radius * 2.2) - planet.x) / planet.radius, -0.7, 0.7);
     }
     skyUniforms.uPlanet.value.set(planet.x * ratio, planet.y * ratio, planet.radius * ratio);
@@ -845,7 +866,14 @@ function start(hero, art) {
     const alongX = sunAlong + 0.03 * Math.sin(t * 0.021);
     const along = new THREE.Vector2(alongX, Math.sqrt(Math.max(0.05, 1 - alongX * alongX))).normalize();
     sunDir.value.set(along.x * 0.42, along.y * 0.42, -(0.92 - 0.1 * rise)).normalize();
-    skyUniforms.uSpin.value = t * 0.012;
+    // The planet turns about an axis leaning toward the viewer, so the surface rolls along the arc
+    // out of the night and into the sunrise: once in about three and a half minutes, some fifteen
+    // pixels a second at the crown of a wide hero. The cloud deck turns a little faster, so it
+    // slides over the ground.
+    spinMatrix.makeRotationY(t * PLANET_SPIN).multiply(alignAxis);
+    skyUniforms.uBody.value.setFromMatrix4(spinMatrix);
+    spinMatrix.makeRotationY(t * PLANET_SPIN * 1.35 + 0.8).multiply(alignAxis);
+    skyUniforms.uCloudBody.value.setFromMatrix4(spinMatrix);
     const lift = planet.radius * (1.0 + 0.004 + 0.02 * rise);
     const sunX = planet.x - drift.value.x * 26 + along.x * lift;
     const sunY = planet.y - drift.value.y * 26 + along.y * lift;
