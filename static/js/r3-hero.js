@@ -109,6 +109,19 @@ const NOISE = /* glsl */ `
     }
     return v;
   }
+  // fbm3 with each octave faded to its mean as it nears the size of a pixel, so fine detail does
+  // not shimmer as the surface moves. footprint: how far p moves across one pixel.
+  float fbm3Filtered(vec3 p, float footprint) {
+    float v = 0.0;
+    float a = 0.5;
+    for (int i = 0; i < 5; i++) {
+      v += a * mix(0.5, noise3(p), 1.0 - smoothstep(0.2, 0.45, footprint));
+      p = p * 2.03 + vec3(1.7, 9.2, 3.1);
+      footprint *= 2.03;
+      a *= 0.5;
+    }
+    return v;
+  }
 `;
 
 // The nebulae, at half resolution: domain-warped noise, cyan high on the right, violet low on the
@@ -171,12 +184,42 @@ const SKY_FRAGMENT = /* glsl */ `
   uniform vec3 uCity;
   uniform vec4 uWorldA;     // sea level, cloud threshold, settlement, feature scale
   uniform vec4 uWorldB;     // ice, lava, bands, floating cities
+  uniform vec4 uWorldC;     // open water (0 on a dry world), aurora, rings (1 when it has them)
+  uniform vec3 uSeed;       // this load's offset into the noise, so no two visits match
+  uniform vec3 uRingNormal; // square to the ring plane, view space
+  uniform vec3 uRingColor;
+  uniform float uRingSeed;
+  uniform vec4 uMoonA;      // small moons: centre x, y and radius in device pixels, and a seed
+  uniform vec4 uMoonB;
+  uniform vec3 uMoonColorA;
+  uniform vec3 uMoonColorB;
   ${NOISE}
+
+  // A small moon: a crater-mottled disc lit by the same sun, usually a crescent, since the sun is
+  // behind the planet.
+  vec3 moon(vec3 col, vec2 px, vec4 m, vec3 tint, vec3 sun) {
+    if (m.z <= 0.0) return col;
+    vec2 d = (px - m.xy) / m.z;
+    float rr = dot(d, d);
+    if (rr > 1.44) return col;
+    float disc = 1.0 - smoothstep(1.0 - 1.5 / m.z, 1.0 + 0.5 / m.z, sqrt(rr));
+    vec3 n = vec3(d, sqrt(max(0.0, 1.0 - rr)));
+    float mottle = fbm3(n * 3.5 + m.w * 50.0);
+    float craters = smoothstep(0.55, 0.7, fbm3(n * 9.0 + m.w * 20.0));
+    vec3 albedo = tint * (0.65 + 0.6 * mottle) * (1.0 - 0.35 * craters);
+    float light = max(dot(n, sun), 0.0);
+    // The dark side is lit by the planet below and the nebula, and the backlit edge catches the sun.
+    vec3 lit = albedo * uSunColor * light * 1.3 + albedo * (uAir * 0.25 * max(-d.y, 0.0) + 0.09);
+    vec2 toSun = length(sun.xy) > 1e-4 ? normalize(sun.xy) : vec2(0.0, 1.0);
+    vec2 outward = length(d) > 1e-4 ? d / length(d) : vec2(0.0, 1.0);
+    lit += uSunColor * pow(1.0 - n.z, 4.0) * max(dot(outward, toSun), 0.0) * 0.5;
+    return mix(col, lit, disc);
+  }
 
   // City lights: one in some cells of a lattice through the surface, clustered where the land is
   // populous. A light counts when it lies near the surface, and is measured along it, so every
   // one that counts is a sharp point rather than a blur sliced at some depth.
-  float cityLights(vec3 t, float fill) {
+  float cityLights(vec3 t, float fill, float footprint) {
     vec3 g = t * 55.0;
     vec3 id = floor(g);
     vec3 f = fract(g) - 0.5;
@@ -187,7 +230,8 @@ const SKY_FRAGMENT = /* glsl */ `
     float depth = dot(d, t);
     if (abs(depth) > 0.3) return 0.0;
     vec3 along = d - t * depth;
-    return exp(-dot(along, along) / 0.016) * (0.45 + 0.55 * hash31(id + 2.2));
+    // Where the lattice packs tighter than about six pixels a cell, the lights would shimmer.
+    return exp(-dot(along, along) / 0.02) * (0.45 + 0.55 * hash31(id + 2.2)) * (1.0 - smoothstep(0.12, 0.3, footprint));
   }
 
   // Pinpoints in hashed cells, one layer per call; a few bright ones carry the four-pointed spikes
@@ -200,7 +244,8 @@ const SKY_FRAGMENT = /* glsl */ `
     if (h > 0.34) return vec3(0.0);
     vec2 offset = (vec2(hash21(id + 3.1), hash21(id + 7.7)) - 0.5) * 0.45;
     vec2 d = (f - offset) * cell;
-    float size = 0.45 + 0.9 * hash21(id + 11.3);
+    // At least a pixel wide, or a star crossing pixel centres as the sky streams by twinkles.
+    float size = 0.85 + 0.7 * hash21(id + 11.3);
     float twinkle = 0.6 + 0.4 * sin(uTime * (0.6 + 1.9 * h) + h * 60.0);
     float core = exp(-dot(d, d) / (size * size));
     vec3 tint = mix(vec3(0.75, 0.92, 1.0), vec3(1.0, 0.93, 0.82), hash21(id + 5.5));
@@ -225,12 +270,20 @@ const SKY_FRAGMENT = /* glsl */ `
 
     float onPlanet = 1.0 - smoothstep(1.0 - 1.5 / radius, 1.0 + 0.5 / radius, r);
 
+    // How far the planet's surface moves across a pixel, taken here, before any branch: screen
+    // derivatives inside one are undefined where a 2x2 quad of pixels straddles the limb.
+    vec3 surfaceHere = uBody * vec3(q, sqrt(max(0.0, 1.0 - r * r)));
+    float footprint = length(fwidth(surfaceHere));
+
     // Stars, hidden behind the planet. The camera is in orbit, so they stream past, the nearer
     // layers faster than the far ones.
     vec3 stars = starLayer(css + uDrift * 8.0 + uScroll, 61.0, 1.0, 0.0)
                + starLayer(css + uDrift * 16.0 + uScroll * 1.9, 97.0, 2.0, 0.0) * 0.8
                + starLayer(css + uDrift * 30.0 + uScroll * 3.4, 173.0, 3.0, 1.0);
     col += stars * (1.0 - onPlanet);
+    vec3 moonsOver = moon(col, px + uDrift * 12.0 * uRatio, uMoonA, uMoonColorA, sun);
+    moonsOver = moon(moonsOver, px + uDrift * 12.0 * uRatio, uMoonB, uMoonColorB, sun);
+    col = mix(moonsOver, col, onPlanet);
 
     if (r < 1.0 + airHeight * 5.0) {
       vec2 limbDir = r > 1e-4 ? q / r : vec2(0.0, 1.0);
@@ -246,31 +299,38 @@ const SKY_FRAGMENT = /* glsl */ `
         vec3 n = vec3(q, z);
         vec3 t = uBody * n;
         vec3 tc = uCloudBody * n;
+        vec3 ts = t + uSeed;
+        vec3 tcs = tc + uSeed.zxy;
         float scale = uWorldA.w;
         float settled = uWorldA.z;
-        float elevation = fbm3(t * 2.1 * scale + 4.0);
-        float land = smoothstep(uWorldA.x, uWorldA.x + 0.05, elevation);
+        float elevation = fbm3Filtered(ts * 2.1 * scale + 4.0, footprint * 2.1 * scale);
+        // Coasts and cloud edges soften by as much as the noise changes across a pixel.
+        float coast = footprint * 2.1 * scale * 0.6;
+        float land = smoothstep(uWorldA.x - coast, uWorldA.x + 0.05 + coast, elevation);
         float high = smoothstep(uWorldA.x + 0.08, uWorldA.x + 0.26, elevation) * land;
-        vec3 ground = mix(uLand, uHighland, high) * (0.8 + 0.4 * fbm3(t * 9.0 * scale));
-        vec3 albedo = mix(uLowland * (0.85 + 0.3 * fbm3(t * 4.0 + 2.0)), ground, land);
-        float cloud = fbm3(tc * vec3(3.2, 7.5, 3.2) + vec3(uTime * 0.006, 0.0, 0.0));
-        cloud = smoothstep(uWorldA.y, uWorldA.y + 0.22, cloud);
+        vec3 ground = mix(uLand, uHighland, high) * (0.8 + 0.4 * fbm3Filtered(ts * 9.0 * scale, footprint * 9.0 * scale));
+        vec3 albedo = mix(uLowland * (0.85 + 0.3 * fbm3Filtered(ts * 4.0 + 2.0, footprint * 4.0)), ground, land);
+        float cloud = fbm3Filtered(tcs * vec3(3.2, 7.5, 3.2) + vec3(uTime * 0.006, 0.0, 0.0), footprint * 7.5);
+        float fluff = footprint * 7.5 * 0.5;
+        cloud = smoothstep(uWorldA.y - fluff, uWorldA.y + 0.22 + fluff, cloud);
 
         // A city from pole to pole: its blocks show by day as a grid.
         if (settled > 0.9) {
-          vec3 blocks = abs(fract(t * 90.0) - 0.5);
-          float street = 1.0 - smoothstep(0.0, 0.08, min(min(blocks.x, blocks.y), blocks.z));
-          albedo *= 1.0 - 0.3 * street * land;
+          vec3 grid = t * 90.0;
+          vec3 blocks = abs(fract(grid) - 0.5);
+          float spread = footprint * 90.0;
+          float street = 1.0 - smoothstep(0.0, max(0.08, spread * 1.5), 0.5 - max(max(blocks.x, blocks.y), blocks.z));
+          albedo *= 1.0 - 0.3 * street * land * (1.0 - smoothstep(0.15, 0.4, spread));
         }
         // Polar caps, reaching toward the equator with the world's cold.
-        float ice = smoothstep(1.02 - uWorldB.x, 1.1 - uWorldB.x, abs(t.y) + 0.12 * (fbm3(t * 6.0) - 0.5)) * step(0.001, uWorldB.x);
+        float ice = smoothstep(1.02 - uWorldB.x, 1.1 - uWorldB.x, abs(t.y) + 0.12 * (fbm3Filtered(ts * 6.0, footprint * 6.0) - 0.5)) * step(0.001, uWorldB.x);
         albedo = mix(albedo, vec3(0.86, 0.93, 1.0), ice);
         land = max(land, ice);
         // A gas giant: belts and zones sheared by turbulence, turning with the faster deck.
         if (uWorldB.z > 0.5) {
-          float turbulence = fbm3(tc * vec3(3.0, 9.0, 3.0));
+          float turbulence = fbm3Filtered(tcs * vec3(3.0, 9.0, 3.0), footprint * 9.0);
           float belt = 0.5 + 0.5 * sin(t.y * 11.0 + (turbulence - 0.5) * 3.2);
-          float fine = 0.5 + 0.5 * sin(t.y * 37.0 + turbulence * 7.0);
+          float fine = 0.5 + 0.5 * sin(t.y * 37.0 + turbulence * 7.0) * (1.0 - smoothstep(0.15, 0.4, footprint * 37.0));
           albedo = mix(mix(uLowland, uLand, belt), uHighland, fine * 0.35);
           vec2 storm = vec2(atan(tc.x, tc.z) - 0.6, (t.y + 0.28) * 3.0);
           float eye = exp(-dot(storm, storm) * 9.0);
@@ -289,8 +349,10 @@ const SKY_FRAGMENT = /* glsl */ `
         float hl = length(h);
         h = hl > 1e-4 ? h / hl : vec3(0.0, 0.0, 1.0);
         float water = (1.0 - land) * (1.0 - cloud) * (1.0 - uWorldB.z);
-        float glint = pow(max(dot(n, h), 0.0), 220.0) * 4.0 + pow(max(dot(n, h), 0.0), 24.0) * 0.12;
-        lit += uSunColor * glint * water * day;
+        // Only on real water: a dry world's basins, an undercity or a lava plain would sparkle as
+        // their edges roll through the highlight.
+        float glint = pow(max(dot(n, h), 0.0), 120.0) * 1.8 + pow(max(dot(n, h), 0.0), 20.0) * 0.1;
+        lit += uSunColor * glint * water * day * uWorldC.x;
 
         // The night side: the planet's own dark teal, with its continents and cloud lit faintly by
         // the cyan nebula above, and the cities of the populous land glittering, so the turning
@@ -298,16 +360,16 @@ const SKY_FRAGMENT = /* glsl */ `
         // squeeze them thinner than a pixel.
         vec3 nebulaLight = mix(vec3(0.6, 0.66, 0.78), uAccent, 0.3) * 0.2 * max(dot(n, vec3(0.2, 0.75, 0.63)), 0.0);
         vec3 night = uNight * (0.35 + 0.3 * n.y) + albedo * nebulaLight;
-        float populous = settled > 0.9 ? 1.0 : smoothstep(0.62 - 0.3 * settled, 0.72 - 0.3 * settled, fbm3(t * 5.0 + 11.0));
+        float populous = settled > 0.9 ? 1.0 : smoothstep(0.62 - 0.3 * settled, 0.72 - 0.3 * settled, fbm3Filtered(ts * 5.0 + 11.0, footprint * 5.0));
         float habitable = mix(land * (1.0 - ice), 1.0, uWorldB.w) * (1.0 - uWorldB.z);
-        float cities = cityLights(t, 0.3 + 0.5 * settled) * habitable * populous * step(0.001, settled);
+        float cities = cityLights(t, 0.3 + 0.5 * settled, footprint * 55.0) * habitable * populous * step(0.001, settled);
         cities *= (1.0 - 0.85 * cloud) * smoothstep(0.06, 0.3, z);
         night += uCity * cities * 1.25;
         vec3 surface = mix(night, lit, day);
 
         // Lava: rifts that glow by day and night alike.
         if (uWorldB.y > 0.0) {
-          float rift = 1.0 - abs(2.0 * fbm3(t * 5.5 * scale + 7.0) - 1.0);
+          float rift = 1.0 - abs(2.0 * fbm3Filtered(ts * 5.5 * scale + 7.0, footprint * 5.5 * scale) - 1.0);
           float molten = uWorldB.y * (smoothstep(0.94, 0.995, rift) + 0.12 * smoothstep(0.8, 0.95, rift)) * (1.0 - 0.7 * cloud);
           surface += vec3(1.0, 0.24, 0.03) * molten * (1.5 + 0.5 * sin(uTime * 1.3 + rift * 20.0));
         }
@@ -324,6 +386,40 @@ const SKY_FRAGMENT = /* glsl */ `
       col += uAir * air * (airLit * 0.4 + mie * 1.1) * step(1.0 - 2.0 / radius, r);
       float line = exp(-abs(r - 1.0) * radius / (1.1 * uRatio));
       col += uAccent * line * (0.2 + 0.9 * airLit + 0.6 * mie);
+
+      // Aurora over a cold world's night side: curtains along the limb, green at their feet and
+      // violet above, drifting.
+      if (uWorldC.y > 0.0) {
+        float around = atan(limbDir.x, limbDir.y);
+        float curtain = 0.5 + 0.5 * sin(around * 26.0 + fbm2(vec2(around * 5.0 + uSeed.x, uTime * 0.12)) * 9.0 + uTime * 0.35);
+        curtain *= curtain * curtain;
+        float h = (r - 1.0) / airHeight;
+        float profile = smoothstep(-0.4, 0.3, h) * exp(-max(h - 0.3, 0.0) * 1.6);
+        vec3 glow = mix(vec3(0.15, 1.0, 0.5), vec3(0.6, 0.3, 1.0), smoothstep(0.4, 2.2, h));
+        float away = 1.0 - smoothstep(-0.35, 0.1, limbDir.x - sunFlat.x);
+        col += glow * curtain * profile * away * uWorldC.y * 0.4;
+      }
+    }
+
+    // Rings: the plane through the planet's centre square to uRingNormal, met along the view.
+    // They hide behind the planet's disc, cross in front of it on the near side, and fall into
+    // its shadow where the sun is behind it.
+    if (uWorldC.z > 0.5 && abs(uRingNormal.z) > 0.05) {
+      float rz = -(q.x * uRingNormal.x + q.y * uRingNormal.y) / uRingNormal.z;
+      vec3 rp = vec3(q, rz);
+      float rr = length(rp);
+      if (rr > 1.1 && rr < 1.48) {
+        float u = (rr - 1.1) / 0.38;
+        float ringlets = smoothstep(0.35, 0.75, 0.5 + 0.5 * sin(u * 19.0 + uRingSeed) * sin(u * 7.0 + uRingSeed * 2.0));
+        float grain = (0.35 + 0.65 * ringlets) * (0.85 + 0.15 * sin(rr * 300.0 + uRingSeed * 3.0));
+        float gap = smoothstep(0.015, 0.03, abs(u - (0.55 + 0.1 * fract(uRingSeed))));
+        float density = smoothstep(0.0, 0.05, u) * (1.0 - smoothstep(0.88, 1.0, u)) * gap * grain;
+        float hidden = r < 1.0 && rz < 0.0 ? 1.0 : 0.0;
+        float toward = dot(rp, sun);
+        float shadow = toward < 0.0 ? 1.0 - smoothstep(0.96, 1.04, length(rp - sun * toward)) : 0.0;
+        vec3 ringLight = uRingColor * uSunColor * (0.2 + 0.8 * (1.0 - shadow)) * (0.55 + 0.6 * pow(max(-sun.z, 0.0), 2.0));
+        col = mix(col, ringLight, density * 0.42 * (1.0 - hidden));
+      }
     }
 
     gl_FragColor = vec4(col, 1.0);
@@ -602,6 +698,15 @@ function jewelGeometry() {
   return geometry;
 }
 
+// How much a world's lowland is open water, from how blue it is: none on a gas giant or a city
+// from pole to pole, whatever colour their lowland.
+function wetness(world) {
+  if (world.bands || world.cities > 0.9) return 0;
+  const red = parseInt(world.lowland.slice(1, 3), 16);
+  const blue = parseInt(world.lowland.slice(5, 7), 16);
+  return THREE.MathUtils.clamp(((blue - red) / 255) * 4, 0, 1);
+}
+
 function fullscreenMaterial(fragmentShader, uniforms) {
   return new THREE.ShaderMaterial({ vertexShader: FULLSCREEN_VERTEX, fragmentShader, uniforms, depthTest: false, depthWrite: false });
 }
@@ -717,7 +822,17 @@ function start(hero, art) {
     uCity: { value: worldColor(world.city) },
     uWorldA: { value: new THREE.Vector4(0.3 + 0.4 * world.sea, 0.78 - 0.38 * world.clouds, world.cities, world.scale) },
     uWorldB: { value: new THREE.Vector4(world.ice, world.lava, world.bands, world.floating) },
+    uWorldC: { value: new THREE.Vector4(wetness(world), world.aurora, world.ringed ? 1 : 0, 0) },
+    uSeed: { value: new THREE.Vector3(...world.seed) },
+    uRingNormal: { value: new THREE.Vector3(world.ringTilt[0] * 0.5, 0.2 + world.ringTilt[1] * 0.3, 1).normalize() },
+    uRingColor: { value: worldColor(world.highland).lerp(worldColor(world.cloud), 0.5).multiplyScalar(0.9) },
+    uRingSeed: { value: world.ringBands },
+    uMoonA: { value: new THREE.Vector4(0, 0, 0, 0) },
+    uMoonB: { value: new THREE.Vector4(0, 0, 0, 0) },
+    uMoonColorA: { value: worldColor('#9a948c').lerp(worldColor('#c2ae92'), world.moonSeeds[0]) },
+    uMoonColorB: { value: worldColor('#8c9096').lerp(worldColor('#b8a8a0'), world.moonSeeds[3]) },
   };
+  const ringNormal = skyUniforms.uRingNormal.value.clone();
   const skyMaterial = fullscreenMaterial(SKY_FRAGMENT, skyUniforms);
 
   const camera = new THREE.PerspectiveCamera(28, 1, 0.1, 60);
@@ -802,7 +917,8 @@ function start(hero, art) {
   const starAngle = (Math.floor(Math.random() * 4) + 0.3 + 0.4 * Math.random()) * (Math.PI / 2);
   const starVelocity = { x: Math.cos(starAngle) * 34, y: Math.sin(starAngle) * 34 };
   const lastBounce = { x: -Infinity, y: -Infinity };
-  const alignAxis = new THREE.Matrix4().makeRotationFromQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0.1, 0.35, 1).normalize(), new THREE.Vector3(0, 1, 0)));
+  const worldAxis = new THREE.Vector3(world.tilt[0], world.tilt[1], 1).normalize();
+  const alignAxis = new THREE.Matrix4().makeRotationFromQuaternion(new THREE.Quaternion().setFromUnitVectors(worldAxis, new THREE.Vector3(0, 1, 0)));
   const spinMatrix = new THREE.Matrix4();
   const planet = { x: 0, y: 0, radius: 1 };
   let sunAlong = 0;
@@ -861,6 +977,23 @@ function start(hero, art) {
       sunAlong = THREE.MathUtils.clamp((Math.min(width - 90, planet.x + planet.radius * 0.38) - planet.x) / planet.radius, -0.7, 0.7);
     }
     skyUniforms.uPlanet.value.set(planet.x * ratio, planet.y * ratio, planet.radius * ratio);
+    // Small moons in the free sky above the planet, clear of the text.
+    const skyLeft = narrow ? width * 0.55 : Math.max(textRight + 60, width * 0.5);
+    [skyUniforms.uMoonA.value, skyUniforms.uMoonB.value].forEach((moonValue, i) => {
+      const [a, b, c] = world.moonSeeds.slice(i * 3, i * 3 + 3);
+      if (i >= Math.min(2, world.moonCount)) {
+        moonValue.set(0, 0, 0, 0);
+        return;
+      }
+      const moonRadius = (5 + a * 17) * (narrow ? 0.6 : 1);
+      const x = skyLeft + b * Math.max(0, width - 30 - skyLeft);
+      const crown = height - (planet.y + planet.radius);
+      const y = THREE.MathUtils.clamp(height * (0.08 + c * 0.4), moonRadius + 8, Math.max(moonRadius + 8, crown - moonRadius - 20));
+      moonValue.set(x * ratio, (height - y) * ratio, moonRadius * ratio, a);
+    });
+    // The survey readout sits under the text column, where the planet never reaches; on a phone
+    // the planet spans the foot of the hero, so it goes to the top corner instead (brand.sass).
+    survey.style.left = narrow || !text ? '' : `${Math.round(text.left - bounds.left)}px`;
     if (text) {
       compositeUniforms.uText.value.set(
         (text.left - bounds.left) / width,
@@ -915,7 +1048,7 @@ function start(hero, art) {
   const turned = new THREE.Quaternion();
   const nudge = new THREE.Quaternion();
   const dragInverse = new THREE.Matrix4();
-  const spinAxisView = new THREE.Vector3(0.1, 0.35, 1).normalize();
+  const spinAxisView = worldAxis.clone();
   const axisX = new THREE.Vector3(1, 0, 0);
   const planetDrag = { active: false, id: -1, lastX: 0, lastY: 0, vx: 0, vy: 0 };
   function heroPoint(event) {
@@ -1067,9 +1200,10 @@ function start(hero, art) {
       }
     }
     dragInverse.makeRotationFromQuaternion(turned).invert();
-    spinMatrix.makeRotationY(t * PLANET_SPIN).multiply(alignAxis).multiply(dragInverse);
+    spinMatrix.makeRotationY(t * PLANET_SPIN * world.spin).multiply(alignAxis).multiply(dragInverse);
     skyUniforms.uBody.value.setFromMatrix4(spinMatrix);
-    spinMatrix.makeRotationY(t * PLANET_SPIN * 1.35 + 0.8).multiply(alignAxis).multiply(dragInverse);
+    skyUniforms.uRingNormal.value.copy(ringNormal).applyQuaternion(turned);
+    spinMatrix.makeRotationY(t * PLANET_SPIN * world.spin * 1.35 + 0.8).multiply(alignAxis).multiply(dragInverse);
     skyUniforms.uCloudBody.value.setFromMatrix4(spinMatrix);
     const lift = planet.radius * (1.0 + 0.004 + 0.02 * rise);
     const sunX = planet.x - drift.value.x * 26 + along.x * lift;
@@ -1210,7 +1344,7 @@ function start(hero, art) {
   let nebulaAge = Infinity;
 
   function requestFrame() {
-    if (running || lost) return;
+    if (running || lost || !compiled) return;
     running = true;
     requestAnimationFrame(frame);
   }
@@ -1229,6 +1363,24 @@ function start(hero, art) {
     clock.getDelta();
     requestFrame();
   });
+
+  // Every shader is compiled before the first frame, in the background where the browser can
+  // (KHR_parallel_shader_compile), so the page never stalls on the planet's large one. The still
+  // stays up meanwhile.
+  let compiled = false;
+  const warm = new THREE.Scene();
+  for (const material of [nebulaMaterial, skyMaterial, brightMaterial, blurMaterial, copyMaterial, compositeMaterial]) {
+    const mesh = new THREE.Mesh(postQuad.geometry, material);
+    mesh.frustumCulled = false;
+    warm.add(mesh);
+  }
+  Promise.all([renderer.compileAsync(warm, postCamera), renderer.compileAsync(scene, camera)])
+    .catch(() => {})
+    .then(() => {
+      compiled = true;
+      clock.getDelta();
+      requestFrame();
+    });
 
   layout();
   new ResizeObserver(() => {

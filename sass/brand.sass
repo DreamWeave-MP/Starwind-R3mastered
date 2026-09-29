@@ -82,16 +82,22 @@
   &.dw-hero--art
     touch-action: pan-y pinch-zoom
 
-// The live hero's survey readout: which world this is, small in the corner over the planet.
+// The live hero's survey readout: which world this is. static/js/r3-hero.js lines it up under the
+// text column, where the planet never reaches; on a phone the planet spans the foot of the hero, so
+// it goes to the top corner.
 .r3-survey
   position: absolute
-  right: max(1rem, calc((100% - var(--dw-width-page)) / 2 + 1.5rem))
   bottom: .8rem
   display: flex
   flex-wrap: wrap
-  justify-content: flex-end
   gap: .2rem .7rem
   max-width: 60%
+
+  .r3-hero--corner &
+    top: .7rem
+    right: 1rem
+    bottom: auto
+    justify-content: flex-end
   margin: 0
   color: color-mix(in oklab, var(--dw-accent) 80%, white)
   font-family: var(--dw-font-mono)
