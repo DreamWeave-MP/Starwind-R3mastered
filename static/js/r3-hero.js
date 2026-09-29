@@ -247,7 +247,7 @@ const SKY_FRAGMENT = /* glsl */ `
 
         // Haze thickening towards the limb, lit where the air is.
         float haze = pow(1.0 - z, 2.4);
-        surface += uAir * haze * (airLit * 0.45 + mie * 0.7);
+        surface += uAir * haze * (airLit * 0.25 + mie * 0.5);
         col = mix(col, surface, onPlanet);
       }
 
@@ -420,6 +420,7 @@ const COMPOSITE_FRAGMENT = /* glsl */ `
   uniform vec2 uGlintPx;
   uniform float uGlint;
   uniform vec4 uText;        // the text's box in uv: left, bottom, right, top
+  uniform vec3 uPlanetPx;    // the planet's centre and radius, device pixels
   varying vec2 vUv;
   ${SCRUB}
   vec3 aces(vec3 x) {
@@ -442,7 +443,7 @@ const COMPOSITE_FRAGMENT = /* glsl */ `
   }
   void main() {
     vec3 color = scrub(texture2D(tScene, vUv).rgb);
-    color += scrub(texture2D(tBloomNear, vUv).rgb) * 0.85 + scrub(texture2D(tBloomFar, vUv).rgb) * 0.65;
+    color += scrub(texture2D(tBloomNear, vUv).rgb) * 0.8 + scrub(texture2D(tBloomFar, vUv).rgb) * 0.4;
 
     vec2 d = (gl_FragCoord.xy - uSunPx) / uRatio;
     vec3 sun = fourPoint(d, 42.0, 0.9, 4.0);
@@ -450,7 +451,8 @@ const COMPOSITE_FRAGMENT = /* glsl */ `
     float streak = exp(-abs(d.y) / 1.4) * tail(abs(d.x), 150.0);
     float ring = exp(-pow(abs(length(d) - 64.0) / 5.0, 2.0)) * 0.04;
     vec3 flare = uSunColor * (sun.x * 0.9 + sun.y * 1.6 + wide.x * 0.12 + wide.y * 0.22) + mix(uAccent, uSunColor, 0.4) * (streak * 0.22 + ring);
-    color += flare * uSunShow;
+    float overPlanet = 1.0 - smoothstep(uPlanetPx.z - 2.0, uPlanetPx.z + 2.0, length(gl_FragCoord.xy - uPlanetPx.xy));
+    color += flare * uSunShow * (1.0 - 0.65 * overPlanet);
 
     vec2 g = (gl_FragCoord.xy - uGlintPx) / uRatio;
     vec3 glint = fourPoint(g, 38.0, 0.9, 3.0);
@@ -639,7 +641,7 @@ function start(hero, art) {
   }));
   pivot.add(jewel);
 
-  const brightMaterial = fullscreenMaterial(BRIGHT_FRAGMENT, { tInput: { value: sceneTarget.texture }, uThreshold: { value: 0.9 } });
+  const brightMaterial = fullscreenMaterial(BRIGHT_FRAGMENT, { tInput: { value: sceneTarget.texture }, uThreshold: { value: 1.1 } });
   const blurMaterial = fullscreenMaterial(BLUR_FRAGMENT, { tInput: { value: null }, uDirection: { value: new THREE.Vector2() } });
   const copyMaterial = fullscreenMaterial(/* glsl */ `
     uniform sampler2D tInput;
@@ -660,6 +662,7 @@ function start(hero, art) {
     uGlintPx: { value: new THREE.Vector2() },
     uGlint: { value: 0 },
     uText: { value: new THREE.Vector4(-2, -2, -2, -2) },
+    uPlanetPx: { value: new THREE.Vector3(0, 0, 1) },
   };
   const compositeMaterial = fullscreenMaterial(COMPOSITE_FRAGMENT, compositeUniforms);
   function blur(source, via, target, radius) {
@@ -728,9 +731,9 @@ function start(hero, art) {
       jewelPx.x = Math.min(textRight + free * 0.45, shellRight - radius * 1.3);
       jewelPx.y = height * 0.4;
       planet.radius = Math.max(width * 0.42, 520);
-      planet.x = jewelPx.x + radius * 1.3;
-      planet.y = -planet.radius + height * 0.22;
-      sunAlong = THREE.MathUtils.clamp((Math.min(width - 90, jewelPx.x + radius * 1.5) - planet.x) / planet.radius, -0.7, 0.7);
+      planet.x = jewelPx.x + radius * 0.6;
+      planet.y = -planet.radius + height * 0.24;
+      sunAlong = THREE.MathUtils.clamp((Math.min(width - 90, jewelPx.x + radius * 2.2) - planet.x) / planet.radius, -0.7, 0.7);
     }
     skyUniforms.uPlanet.value.set(planet.x * ratio, planet.y * ratio, planet.radius * ratio);
     if (text) {
@@ -847,6 +850,7 @@ function start(hero, art) {
     const sunX = planet.x - drift.value.x * 26 + along.x * lift;
     const sunY = planet.y - drift.value.y * 26 + along.y * lift;
     compositeUniforms.uSunPx.value.set(sunX * ratio, sunY * ratio);
+    compositeUniforms.uPlanetPx.value.set((planet.x - drift.value.x * 26) * ratio, (planet.y - drift.value.y * 26) * ratio, planet.radius * ratio);
     compositeUniforms.uSunShow.value = (0.25 + 0.75 * Math.min(1, rise * 1.6 + 0.2)) * (narrow ? 0.55 : 1);
 
     // The jewel: a slow sway, the lean toward the pointer, and now and then a quarter turn.
