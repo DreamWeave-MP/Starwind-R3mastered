@@ -21,7 +21,8 @@
 // Every load also varies the world a little, so no two visits match: the noise that draws its
 // continents is seeded afresh, and its sea level, cloud, settlement, feature size, colours, axis
 // and turn are nudged either way. A page can ask for one by name, ?world=tatooine, which is how
-// the screenshots are made; ?seed=… repeats a particular variation.
+// the screenshots are made; ?seed=… repeats a particular variation, and ?frame=shoulder picks the
+// camera's framing.
 
 export const WORLDS = [
   { name: 'Tatooine', note: 'Outer Rim · twin suns', lowland: '#a9784a', land: '#d8b07a', highland: '#b98755', cloud: '#f3e6cc', air: '#f2c98f', city: '#ffcf8a', sea: 0.3, clouds: 0.05, cities: 0.12, scale: 1.2, suns: 2 },
@@ -76,6 +77,13 @@ const DEFAULTS = { sea: 0.5, clouds: 0.4, cities: 0.1, ice: 0, lava: 0, bands: 0
 
 function key(name) {
   return name.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+// crown: the planet rising in the free sky. shoulder: a large planet whose centre is past the right
+// edge, its limb climbing across the hero. distant: a smaller planet, more of its disc showing.
+// close: a huge one, its horizon nearly flat.
+function pickFrame(roll) {
+  return roll < 0.4 ? 'crown' : roll < 0.65 ? 'shoulder' : roll < 0.85 ? 'distant' : 'close';
 }
 
 // A small seeded generator, so ?seed= repeats a variation exactly.
@@ -136,7 +144,13 @@ export function pickWorld() {
     ringBands: random() * 100,
     moonCount: Math.floor(random() * (base.moons + 1)),
     moonSeeds: [random(), random(), random(), random(), random(), random()],
+    // The camera: how the planet is framed on this load (see layout() in r3-hero.js).
+    frame: { kind: pickFrame(random()), size: random(), at: random(), lift: random(), sun: random() },
   };
   for (const part of ['lowland', 'land', 'highland', 'cloud', 'air']) world[part] = nudge(base[part], random, 1);
+  const framed = query.get('frame');
+  if (['crown', 'shoulder', 'distant', 'close'].includes(framed)) world.frame.kind = framed;
+  // The rest of this load's choices (the fleet, the sky) draw on from the same sequence.
+  world.random = random;
   return world;
 }

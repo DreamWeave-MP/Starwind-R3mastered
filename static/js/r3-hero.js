@@ -971,10 +971,35 @@ function start(hero, art) {
       planet.y = -planet.radius + height * 0.15;
       sunAlong = THREE.MathUtils.clamp((width * 0.97 - planet.x) / planet.radius, -0.7, 0.7);
     } else {
-      planet.radius = Math.max(width * 0.36, 480);
-      planet.x = textRight + free * 0.52;
-      planet.y = -planet.radius + height * 0.3;
-      sunAlong = THREE.MathUtils.clamp((Math.min(width - 90, planet.x + planet.radius * 0.38) - planet.x) / planet.radius, -0.7, 0.7);
+      // The framing picked for this load (r3-worlds.js). Every one keeps the disc clear of the
+      // text: where it reaches the hero's foot, it does so right of the text column.
+      const frame = world.frame;
+      let crown;
+      if (frame.kind === 'shoulder') {
+        planet.radius = Math.max(width * 0.5, 640) * (0.9 + 0.3 * frame.size);
+        planet.x = width + planet.radius * (0.02 + 0.2 * frame.at);
+        const reach = planet.x - (textRight + 60);
+        const highest = reach < planet.radius ? planet.radius - Math.sqrt(planet.radius * planet.radius - reach * reach) : height;
+        crown = Math.min(height * (0.55 + 0.3 * frame.lift), highest);
+        sunAlong = -0.25 - 0.35 * frame.sun;
+      } else if (frame.kind === 'distant') {
+        planet.radius = Math.max(width * 0.17, 230) * (0.85 + 0.35 * frame.size);
+        planet.x = Math.max(textRight + planet.radius + 50, textRight + free * (0.5 + 0.15 * frame.at));
+        crown = Math.min(height * (0.55 + 0.2 * frame.lift), height - 40);
+        sunAlong = 0.2 + 0.35 * frame.sun;
+      } else if (frame.kind === 'close') {
+        planet.radius = Math.max(width * 0.9, 1100) * (0.9 + 0.3 * frame.size);
+        planet.x = textRight + free * (0.45 + 0.2 * frame.at);
+        const reach = planet.x - (textRight + 60);
+        crown = Math.min(height * (0.22 + 0.12 * frame.lift), planet.radius - Math.sqrt(Math.max(0, planet.radius * planet.radius - reach * reach)));
+        sunAlong = THREE.MathUtils.clamp((Math.min(width - 90, planet.x + free * 0.3) - planet.x) / planet.radius, -0.8, 0.8);
+      } else {
+        planet.radius = Math.max(width * 0.36, 480) * (0.85 + 0.3 * frame.size);
+        planet.x = textRight + free * (0.42 + 0.2 * frame.at);
+        crown = height * (0.24 + 0.12 * frame.lift);
+        sunAlong = THREE.MathUtils.clamp((Math.min(width - 90, planet.x + planet.radius * 0.38) - planet.x) / planet.radius, -0.8, 0.8);
+      }
+      planet.y = -planet.radius + Math.max(crown, 40);
     }
     skyUniforms.uPlanet.value.set(planet.x * ratio, planet.y * ratio, planet.radius * ratio);
     // Small moons in the free sky above the planet, clear of the text.
