@@ -795,6 +795,13 @@ function start(hero, art) {
   let slowTime = 0;
   let narrow = false;
   const jewelPx = { x: 0, y: 0, radius: 1 };
+  let starPlaced = false;
+  let perPixel = 1;
+  // The star's drift: a steady 34 css pixels a second, on a diagonal picked at load, from a spot
+  // picked at load.
+  const starAngle = (Math.floor(Math.random() * 4) + 0.3 + 0.4 * Math.random()) * (Math.PI / 2);
+  const starVelocity = { x: Math.cos(starAngle) * 34, y: Math.sin(starAngle) * 34 };
+  const lastBounce = { x: -Infinity, y: -Infinity };
   const alignAxis = new THREE.Matrix4().makeRotationFromQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0.1, 0.35, 1).normalize(), new THREE.Vector3(0, 1, 0)));
   const spinMatrix = new THREE.Matrix4();
   const planet = { x: 0, y: 0, radius: 1 };
@@ -829,25 +836,29 @@ function start(hero, art) {
     const textRight = text ? text.right - bounds.left : 0;
     const shellRight = Math.min(width, width / 2 + 760);
     const free = shellRight - textRight;
-    const radius = Math.min(height * 0.27, free * 0.3, 150);
-    narrow = width < 761 || radius < 64;
+    narrow = width < 761 || free < 360;
     hero.classList.toggle('r3-hero--corner', narrow);
+    // The star is small now, a beacon over the planet and the ships. It starts anywhere in the
+    // hero and drifts from there (see the render loop); a resize keeps it inside.
+    jewelPx.radius = narrow ? Math.min(width * 0.085, 34) : THREE.MathUtils.clamp(height * 0.085, 30, 46);
+    const margin = jewelPx.radius * 1.25;
+    if (!starPlaced) {
+      jewelPx.x = margin + Math.random() * Math.max(0, width - margin * 2);
+      jewelPx.y = margin + Math.random() * Math.max(0, height - margin * 2);
+      starPlaced = true;
+    }
+    jewelPx.x = THREE.MathUtils.clamp(jewelPx.x, margin, Math.max(margin, width - margin));
+    jewelPx.y = THREE.MathUtils.clamp(jewelPx.y, margin, Math.max(margin, height - margin));
     if (narrow) {
-      jewelPx.radius = Math.min(width * 0.1, 44);
-      jewelPx.x = width - jewelPx.radius * 1.35;
-      jewelPx.y = jewelPx.radius * 1.45;
       planet.radius = Math.max(width * 1.05, 420);
       planet.x = width * 0.62;
       planet.y = -planet.radius + height * 0.15;
       sunAlong = THREE.MathUtils.clamp((width * 0.97 - planet.x) / planet.radius, -0.7, 0.7);
     } else {
-      jewelPx.radius = radius;
-      jewelPx.x = Math.min(textRight + free * 0.45, shellRight - radius * 1.3);
-      jewelPx.y = height * 0.4;
       planet.radius = Math.max(width * 0.36, 480);
-      planet.x = jewelPx.x + radius * 0.6;
+      planet.x = textRight + free * 0.52;
       planet.y = -planet.radius + height * 0.3;
-      sunAlong = THREE.MathUtils.clamp((Math.min(width - 90, jewelPx.x + radius * 2.2) - planet.x) / planet.radius, -0.7, 0.7);
+      sunAlong = THREE.MathUtils.clamp((Math.min(width - 90, planet.x + planet.radius * 0.38) - planet.x) / planet.radius, -0.7, 0.7);
     }
     skyUniforms.uPlanet.value.set(planet.x * ratio, planet.y * ratio, planet.radius * ratio);
     if (text) {
@@ -860,7 +871,7 @@ function start(hero, art) {
     }
 
     fleet.layout({ width, height, free: textRight, narrow, ratio });
-    const perPixel = (2 * camera.position.z * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))) / height;
+    perPixel = (2 * camera.position.z * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))) / height;
     jewelScale = jewelPx.radius * perPixel;
     anchor.set((jewelPx.x - width / 2) * perPixel, (height / 2 - jewelPx.y) * perPixel, 0);
     pivot.scale.setScalar(jewelScale);
@@ -892,8 +903,9 @@ function start(hero, art) {
     const bounds = hero.getBoundingClientRect();
     const dx = event.clientX - bounds.left - jewelPx.x;
     const dy = event.clientY - bounds.top - jewelPx.y;
-    if (dx * dx + dy * dy > (jewelPx.radius * 1.4) ** 2) return;
+    if (dx * dx + dy * dy > (jewelPx.radius * 1.6) ** 2) return;
     beginSpin();
+    fleet.summon();
     requestFrame();
   }, { passive: true });
 
@@ -913,7 +925,7 @@ function start(hero, art) {
   function overJewel(point) {
     const dx = point.x - jewelPx.x;
     const dy = point.y - jewelPx.y;
-    return dx * dx + dy * dy <= (jewelPx.radius * 1.4) ** 2;
+    return dx * dx + dy * dy <= (jewelPx.radius * 1.6) ** 2;
   }
   function overPlanet(point) {
     const dx = point.x - (planet.x - drift.value.x * 26);
@@ -946,8 +958,8 @@ function start(hero, art) {
   hero.addEventListener('pointermove', (event) => {
     if (!planetDrag.active) {
       const point = heroPoint(event);
-      const grabbable = !event.target.closest(interactive) && !overJewel(point) && overPlanet(point);
-      hero.style.cursor = grabbable ? 'grab' : '';
+      const onLink = event.target.closest(interactive);
+      hero.style.cursor = !onLink && overJewel(point) ? 'pointer' : (!onLink && overPlanet(point) ? 'grab' : '');
       return;
     }
     if (event.pointerId !== planetDrag.id) return;
@@ -1072,6 +1084,36 @@ function start(hero, art) {
       const lift2 = planet.radius * (1.0 + 0.002 + 0.012 * rise);
       compositeUniforms.uSun2Px.value.set((planet.x - drift.value.x * 26 + second.x * lift2) * ratio, (planet.y - drift.value.y * 26 + second.y * lift2) * ratio);
       compositeUniforms.uSun2Show.value = compositeUniforms.uSunShow.value * 0.8;
+    }
+
+    // The star drifts round the hero and bounces off its edges like an old screensaver, the point
+    // that strikes a wall flashing. A hit square in a corner spins it and calls the fleet.
+    if (!reduceMotion) {
+      const margin = jewelPx.radius * 1.25;
+      jewelPx.x += starVelocity.x * dt;
+      jewelPx.y += starVelocity.y * dt;
+      let wall = -1;
+      if (jewelPx.x < margin || jewelPx.x > width - margin) {
+        wall = jewelPx.x < margin ? 3 : 1;
+        jewelPx.x = THREE.MathUtils.clamp(jewelPx.x, margin, width - margin);
+        starVelocity.x = -starVelocity.x;
+        lastBounce.x = clockTime;
+      }
+      if (jewelPx.y < margin || jewelPx.y > height - margin) {
+        wall = jewelPx.y < margin ? 0 : 2;
+        jewelPx.y = THREE.MathUtils.clamp(jewelPx.y, margin, height - margin);
+        starVelocity.y = -starVelocity.y;
+        lastBounce.y = clockTime;
+      }
+      if (wall >= 0) {
+        sparkleTip = wall;
+        sparkleStart = clockTime;
+        if (Math.abs(lastBounce.x - lastBounce.y) < 0.2) {
+          beginSpin();
+          fleet.summon();
+        }
+      }
+      anchor.set((jewelPx.x - width / 2) * perPixel, (height / 2 - jewelPx.y) * perPixel, 0);
     }
 
     // The jewel: a slow sway, the lean toward the pointer, and now and then a quarter turn.
