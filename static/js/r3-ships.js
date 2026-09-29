@@ -57,6 +57,11 @@ const SHIP_FRAGMENT = /* glsl */ `
   uniform float uBoost;
   uniform float uWindows;
   uniform float uHaze;       // how far off it is: distance greys it toward the sky
+  uniform float uTextured;   // 1 where the hull maps below dress the plating
+  uniform sampler2D uHullMap;    // plate colours
+  uniform sampler2D uDetailMap;  // r: relief, g: lit ports
+  uniform float uMapScale;
+  uniform mat3 uRotation;    // the ship's turn, object to world
 
   float hash21(vec2 p) {
     p = fract(p * vec2(123.34, 456.21));
@@ -89,11 +94,33 @@ const SHIP_FRAGMENT = /* glsl */ `
 
     // Panels, on the plane the face lies most nearly in.
     vec3 an = abs(vObjectNormal);
-    vec2 uv = an.y > max(an.x, an.z) ? vObject.xz : (an.x > an.z ? vObject.zy : vObject.xy);
+    bool onTop = an.y > max(an.x, an.z);
+    bool sideways = !onTop && an.x > an.z;
+    vec2 uv = onTop ? vObject.xz : (sideways ? vObject.zy : vObject.xy);
     vec2 cell = uv * uPanels;
     float tone = 0.8 + 0.32 * hash21(floor(cell) + floor(vKind * 7.0));
     float seams = max(seam(cell.x), seam(cell.y * 0.5));
     vec3 base = uHull;
+    float ports = 0.0;
+    if (uTextured > 0.5 && (vKind < 1.5 || (vKind > 2.5 && vKind < 3.5))) {
+      // The painted plating: its colour, and its relief turned into a tilt of the normal, measured
+      // a screen pixel apart so it neither vanishes up close nor shimmers far off.
+      vec2 mapUv = uv * uMapScale + vec2(vKind * 0.37, 0.0);
+      vec2 step2 = max(fwidth(mapUv), vec2(1.0 / 2048.0));
+      vec4 detail = texture2D(uDetailMap, mapUv);
+      float hx = texture2D(uDetailMap, mapUv + vec2(step2.x, 0.0)).r;
+      float hy = texture2D(uDetailMap, mapUv + vec2(0.0, step2.y)).r;
+      vec3 tu = onTop ? vec3(1.0, 0.0, 0.0) : (sideways ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0));
+      vec3 tv = onTop ? vec3(0.0, 0.0, 1.0) : vec3(0.0, 1.0, 0.0);
+      vec3 objectNormal = normalize(vObjectNormal);
+      vec3 bumped = objectNormal - (tu * (hx - detail.r) + tv * (hy - detail.r)) * 3.0;
+      n = safeNormalize(uRotation * bumped, n);
+      if (dot(n, v) < 0.0) n = -n;
+      base = texture2D(uHullMap, mapUv).rgb * mix(0.55, 1.0, smoothstep(0.1, 0.35, detail.r));
+      ports = detail.g;
+      tone = 1.0;
+      seams = 0.0;
+    }
     if (vKind > 3.5 && vKind < 4.5) {
       float r = length(vObject.xy);
       base = mix(uHull, uPaint, step(0.2, r) * step(r, 0.27));
@@ -109,8 +136,10 @@ const SHIP_FRAGMENT = /* glsl */ `
     col += uAir * pow(1.0 - facing, 4.0) * 0.35;
     col += uSunColor * pow(1.0 - facing, 3.0) * max(dot(-v, uSunDir), 0.0) * 0.9;
 
+    col += vec3(1.0, 0.84, 0.58) * ports * 2.6 * uWindows;
+
     // Windows: rows of lit ports on the superstructure's walls, some dark.
-    if (vKind > 2.5 && vKind < 3.5 && an.y < 0.5) {
+    if (uTextured < 0.5 && vKind > 2.5 && vKind < 3.5 && an.y < 0.5) {
       vec2 w = uv * vec2(90.0, 70.0);
       vec2 f = abs(fract(w) - 0.5);
       float port = (1.0 - smoothstep(0.12, 0.26, f.x)) * (1.0 - smoothstep(0.1, 0.24, f.y));
@@ -229,34 +258,85 @@ const at = (x, y, z) => new THREE.Matrix4().makeTranslation(x, y, z);
 const along = new THREE.Matrix4().makeRotationX(Math.PI / 2);
 const facingBack = new THREE.Matrix4().makeRotationY(Math.PI);
 
-// The destroyer: a dagger one unit long, nose at +z, with a stepped superstructure, a bridge tower
-// and three engines astern.
+// The destroyer: a dagger one unit long, nose at +z. The hull has walls along its edges, where the
+// trench runs; a second, narrower wedge rises along the spine; the superstructure steps up toward
+// the stern to the bridge tower; turbolaser batteries line both edges; greebles cover the deck;
+// and three main engines and two smaller ones burn astern.
 function destroyerGeometry() {
-  const nose = [0, 0, 0.5];
-  const left = [-0.38, 0, -0.5];
-  const right = [0.38, 0, -0.5];
-  const top = [0, 0.075, -0.5];
-  const bottom = [0, -0.05, -0.5];
+  const nose = [0, 0.006, 0.5];
+  const keel = [0, -0.006, 0.5];
+  const leftTop = [-0.38, 0.014, -0.5];
+  const leftBottom = [-0.38, -0.014, -0.5];
+  const rightTop = [0.38, 0.014, -0.5];
+  const rightBottom = [0.38, -0.014, -0.5];
+  const ridge = [0, 0.075, -0.5];
+  const belly = [0, -0.05, -0.5];
+  const stern = [0, 0.004, -0.5];
   const body = hull([
-    [nose, left, top], [nose, top, right], [nose, bottom, left], [nose, right, bottom],
-    [left, bottom, top], [top, bottom, right],
+    [nose, leftTop, ridge], [nose, ridge, rightTop],
+    [keel, belly, leftBottom], [keel, rightBottom, belly],
+    [nose, keel, leftBottom], [nose, leftBottom, leftTop],
+    [nose, rightTop, rightBottom], [nose, rightBottom, keel],
+    [stern, leftTop, ridge], [stern, ridge, rightTop], [stern, rightTop, rightBottom],
+    [stern, rightBottom, belly], [stern, belly, leftBottom], [stern, leftBottom, leftTop],
   ], new THREE.Vector3(0, 0, -0.17));
   const parts = [{ geometry: body, kind: 0 }];
+  // The dorsal wedge along the spine.
+  const spine = hull([
+    [[0, 0.03, 0.2], [-0.14, 0.05, -0.5], [0, 0.1, -0.5]], [[0, 0.03, 0.2], [0, 0.1, -0.5], [0.14, 0.05, -0.5]],
+    [[0, 0.03, 0.2], [0, 0.02, -0.5], [-0.14, 0.05, -0.5]], [[0, 0.03, 0.2], [0.14, 0.05, -0.5], [0, 0.02, -0.5]],
+    [[-0.14, 0.05, -0.5], [0, 0.02, -0.5], [0, 0.1, -0.5]], [[0, 0.1, -0.5], [0, 0.02, -0.5], [0.14, 0.05, -0.5]],
+  ], new THREE.Vector3(0, 0.05, -0.27));
+  parts.push({ geometry: spine, kind: 0 });
   const box = (w, h, d, x, y, z, kind) => parts.push({ geometry: new THREE.BoxGeometry(w, h, d), matrix: at(x, y, z), kind });
-  box(0.26, 0.06, 0.36, 0, 0.05, -0.32, 3);
-  box(0.17, 0.05, 0.22, 0, 0.1, -0.38, 3);
-  box(0.05, 0.08, 0.06, 0, 0.16, -0.43, 1);
-  box(0.2, 0.026, 0.05, 0, 0.21, -0.43, 3);
-  for (const x of [-0.065, 0.065]) {
-    parts.push({ geometry: new THREE.SphereGeometry(0.018, 10, 8), matrix: at(x, 0.235, -0.43), kind: 1 });
+  // The superstructure, stepping up toward the stern.
+  box(0.3, 0.05, 0.3, 0, 0.09, -0.36, 3);
+  box(0.22, 0.045, 0.22, 0, 0.13, -0.4, 3);
+  box(0.15, 0.04, 0.15, 0, 0.165, -0.43, 3);
+  box(0.36, 0.02, 0.06, 0, 0.1, -0.24, 1);
+  box(0.045, 0.07, 0.05, 0, 0.215, -0.44, 1);
+  box(0.21, 0.028, 0.055, 0, 0.26, -0.44, 3);
+  box(0.004, 0.05, 0.004, 0.03, 0.3, -0.45, 1);
+  box(0.003, 0.035, 0.003, -0.025, 0.29, -0.45, 1);
+  for (const x of [-0.07, 0.07]) {
+    parts.push({ geometry: new THREE.SphereGeometry(0.02, 12, 10), matrix: at(x, 0.285, -0.44), kind: 1 });
   }
-  // A trench of fittings along the ridge.
-  for (let i = 0; i < 6; i++) box(0.03, 0.012, 0.035, 0, 0.034 + i * 0.004, -0.02 - i * 0.045, 1);
-  for (const [x, y] of [[-0.12, 0.0], [0, 0.02], [0.12, 0.0]]) {
-    parts.push({ geometry: new THREE.CylinderGeometry(0.042, 0.048, 0.08, 20), matrix: at(x, y, -0.53).multiply(along), kind: 1 });
-    parts.push({ geometry: new THREE.CircleGeometry(0.036, 20), matrix: at(x, y, -0.5705).multiply(facingBack), kind: 2 });
+  // The deck: height of the upper hull at a point, so fittings sit on it.
+  const deck = (x, z) => {
+    const u = THREE.MathUtils.clamp(0.5 - z, 0, 1);
+    const half = Math.max(0.38 * u, 1e-3);
+    const crest = 0.006 + 0.069 * u;
+    const edge = 0.006 + 0.008 * u;
+    return crest + (edge - crest) * Math.min(1, Math.abs(x) / half);
+  };
+  // Turbolaser batteries along both edges.
+  for (let i = 0; i < 11; i++) {
+    const z = 0.28 - i * 0.07;
+    const u = 0.5 - z;
+    for (const s of [-1, 1]) {
+      const x = s * 0.38 * u * 0.78;
+      const y = deck(x, z);
+      parts.push({ geometry: new THREE.CylinderGeometry(0.009, 0.011, 0.008, 10), matrix: at(x, y + 0.004, z), kind: 1 });
+      box(0.004, 0.004, 0.022, x - 0.003, y + 0.009, z + 0.01, 1);
+      box(0.004, 0.004, 0.022, x + 0.003, y + 0.009, z + 0.01, 1);
+    }
   }
-  for (const x of [-0.2, 0.2]) {
+  // Greebles scattered over the deck, denser toward the stern.
+  for (let i = 0; i < 110; i++) {
+    const z = 0.35 - Math.pow(Math.random(), 0.7) * 0.8;
+    const u = 0.5 - z;
+    const x = (Math.random() * 2 - 1) * 0.38 * u * 0.85;
+    const w = 0.006 + Math.random() * 0.02;
+    const h = 0.002 + Math.random() * 0.008;
+    const d = 0.006 + Math.random() * 0.03;
+    box(w, h, d, x, deck(x, z) + h / 2, z, 1);
+  }
+  for (const [x, y, r] of [[-0.12, 0.0, 0.045], [0, 0.025, 0.05], [0.12, 0.0, 0.045]]) {
+    parts.push({ geometry: new THREE.CylinderGeometry(r, r * 1.15, 0.08, 24), matrix: at(x, y, -0.53).multiply(along), kind: 1 });
+    parts.push({ geometry: new THREE.CylinderGeometry(r * 0.8, r * 0.8, 0.012, 24), matrix: at(x, y, -0.57).multiply(along), kind: 1 });
+    parts.push({ geometry: new THREE.CircleGeometry(r * 0.78, 24), matrix: at(x, y, -0.5765).multiply(facingBack), kind: 2 });
+  }
+  for (const x of [-0.21, 0.21]) {
     parts.push({ geometry: new THREE.CylinderGeometry(0.016, 0.018, 0.05, 12), matrix: at(x, 0.0, -0.52).multiply(along), kind: 1 });
     parts.push({ geometry: new THREE.CircleGeometry(0.013, 12), matrix: at(x, 0.0, -0.5455).multiply(facingBack), kind: 2 });
   }
@@ -289,6 +369,108 @@ function fighterGeometry() {
     parts.push({ geometry: new THREE.CircleGeometry(0.026, 14), matrix: turn.clone().multiply(at(0.1, 0, -0.4305)).multiply(facingBack), kind: 2 });
   }
   return merge(parts);
+}
+
+// The destroyer's plating, painted once per load on two canvases: plates of unequal size split
+// from the square, each its own shade, with grooves between them; greebles, vents and lit ports on
+// some; and long trenches across. The first canvas is colour; the second carries relief in red
+// and the lit ports in green.
+function hullMaps(anisotropy) {
+  const size = 1024;
+  const colour = document.createElement('canvas');
+  const detail = document.createElement('canvas');
+  colour.width = colour.height = detail.width = detail.height = size;
+  const c = colour.getContext('2d');
+  const d = detail.getContext('2d');
+  c.fillStyle = '#3b3f45';
+  c.fillRect(0, 0, size, size);
+  d.fillStyle = 'rgb(20, 0, 0)';
+  d.fillRect(0, 0, size, size);
+  const random = Math.random;
+  const plates = [];
+  (function split(x, y, w, h, depth) {
+    const small = w < 100 && h < 100;
+    if (depth > 7 || w < 28 || h < 28 || (small && random() < 0.45)) {
+      plates.push([x, y, w, h]);
+      return;
+    }
+    if (w > h * (0.7 + random() * 0.6)) {
+      const cut = Math.round(w * (0.25 + random() * 0.5));
+      split(x, y, cut, h, depth + 1);
+      split(x + cut, y, w - cut, h, depth + 1);
+    } else {
+      const cut = Math.round(h * (0.25 + random() * 0.5));
+      split(x, y, w, cut, depth + 1);
+      split(x, y + cut, w, h - cut, depth + 1);
+    }
+  })(0, 0, size, size, 0);
+  const grey = (value, blue = 6) => `rgb(${value}, ${value + 3}, ${value + blue})`;
+  for (const [x, y, w, h] of plates) {
+    const tone = 112 + Math.floor(random() * 50);
+    const lift = 110 + Math.floor(random() * 90);
+    c.fillStyle = grey(tone);
+    c.fillRect(x + 1, y + 1, w - 2, h - 2);
+    d.fillStyle = `rgb(${lift}, 0, 0)`;
+    d.fillRect(x + 1, y + 1, w - 2, h - 2);
+    const roll = random();
+    if (roll < 0.45) {
+      // Greebles: small raised boxes, lit on one edge and shadowed on the other.
+      const count = 2 + Math.floor(random() * 12);
+      for (let i = 0; i < count; i++) {
+        const gw = 3 + Math.floor(random() * Math.min(22, w / 3));
+        const gh = 3 + Math.floor(random() * Math.min(22, h / 3));
+        const gx = x + 3 + Math.floor(random() * Math.max(1, w - gw - 6));
+        const gy = y + 3 + Math.floor(random() * Math.max(1, h - gh - 6));
+        const gtone = tone + Math.floor(random() * 40) - 20;
+        c.fillStyle = grey(Math.max(40, gtone - 30));
+        c.fillRect(gx + 1, gy + 1, gw, gh);
+        c.fillStyle = grey(Math.min(230, gtone));
+        c.fillRect(gx, gy, gw, gh);
+        d.fillStyle = `rgb(${Math.min(255, lift + 50)}, 0, 0)`;
+        d.fillRect(gx, gy, gw, gh);
+      }
+    } else if (roll < 0.6) {
+      // Vents: close grooves across the plate.
+      for (let i = x + 4; i < x + w - 4; i += 4) {
+        c.fillStyle = grey(Math.max(40, tone - 45));
+        c.fillRect(i, y + 4, 2, h - 8);
+        d.fillStyle = `rgb(${Math.max(30, lift - 60)}, 0, 0)`;
+        d.fillRect(i, y + 4, 2, h - 8);
+      }
+    } else if (roll < 0.78) {
+      // Ports: rows of small windows, some lit.
+      for (let row = y + 5; row < y + h - 4; row += 7) {
+        for (let col = x + 4; col < x + w - 4; col += 5) {
+          const lit = random() < 0.5;
+          c.fillStyle = lit ? '#e8d2a0' : grey(40);
+          c.fillRect(col, row, 2, 2);
+          d.fillStyle = `rgb(${Math.max(30, lift - 40)}, ${lit ? 255 : 0}, 0)`;
+          d.fillRect(col, row, 2, 2);
+        }
+      }
+    } else if (roll < 0.86) {
+      // An inset hatch.
+      c.fillStyle = grey(Math.max(40, tone - 35));
+      c.fillRect(x + w * 0.25, y + h * 0.25, w * 0.5, h * 0.5);
+      d.fillStyle = `rgb(${Math.max(30, lift - 70)}, 0, 0)`;
+      d.fillRect(x + w * 0.25, y + h * 0.25, w * 0.5, h * 0.5);
+    }
+  }
+  for (let i = 0; i < 5; i++) {
+    const ty = Math.floor(random() * size);
+    const th = 4 + Math.floor(random() * 8);
+    c.fillStyle = grey(58);
+    c.fillRect(0, ty, size, th);
+    d.fillStyle = 'rgb(35, 0, 0)';
+    d.fillRect(0, ty, size, th);
+  }
+  const textures = [new THREE.CanvasTexture(colour), new THREE.CanvasTexture(detail)];
+  textures[0].colorSpace = THREE.SRGBColorSpace;
+  for (const texture of textures) {
+    texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+    texture.anisotropy = anisotropy;
+  }
+  return textures;
 }
 
 // Paths ------------------------------------------------------------------------------------------
@@ -324,7 +506,8 @@ function orient(object, forward, up) {
 
 const CLASSES = ['Imperial-class · 1,600 m', 'Victory-class · 900 m', 'Venator-class · 1,137 m', 'Interdictor · 1,129 m', 'Tector-class · 1,600 m', 'Resurgent-class · 2,916 m'];
 
-export function createFleet({ scene, camera, time, sunDir, sunColor, air, accent, reduceMotion, overlay }) {
+export function createFleet({ scene, camera, time, sunDir, sunColor, air, accent, reduceMotion, overlay, anisotropy = 1 }) {
+  const [hullMap, detailMap] = hullMaps(anisotropy);
   const shipMaterial = (hull, paint, engine, panels) => new THREE.ShaderMaterial({
     vertexShader: SHIP_VERTEX,
     fragmentShader: SHIP_FRAGMENT,
@@ -343,6 +526,11 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, accent
       uBoost: { value: 0 },
       uWindows: { value: 1 },
       uHaze: { value: 0 },
+      uTextured: { value: 0 },
+      uHullMap: { value: hullMap },
+      uDetailMap: { value: detailMap },
+      uMapScale: { value: 2.4 },
+      uRotation: { value: new THREE.Matrix3() },
       uStretch: { value: 1 },
       uAnchor: { value: 0 },
     },
@@ -352,11 +540,14 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, accent
   // The destroyer.
   const destroyer = new THREE.Group();
   const destroyerMaterial = shipMaterial('#7a7f87', '#7a7f87', '#9fd8ff', 30);
-  destroyerMaterial.uniforms.uHaze.value = 0.18;
+  destroyerMaterial.uniforms.uHaze.value = 0.1;
+  destroyerMaterial.uniforms.uTextured.value = 1;
   const destroyerMesh = new THREE.Mesh(destroyerGeometry(), destroyerMaterial);
+  // The hull's extremes, which the contact brackets fit: nose, stern corners, keel, mast, engines.
+  const hullCorners = [[0, 0, 0.5], [-0.38, 0, -0.5], [0.38, 0, -0.5], [0, -0.05, -0.5], [0, 0.33, -0.45], [-0.11, 0.26, -0.44], [0.11, 0.26, -0.44], [-0.12, 0, -0.58], [0.12, 0, -0.58], [0, 0.07, -0.58]].map((point) => new THREE.Vector3(...point));
   destroyerMesh.frustumCulled = false;
   destroyer.add(destroyerMesh);
-  const lightPositions = [-0.37, 0.004, -0.49, 0.37, 0.004, -0.49, 0, 0.24, -0.43, 0, 0.01, 0.49];
+  const lightPositions = [-0.375, 0.0, -0.49, 0.375, 0.0, -0.49, 0.03, 0.33, -0.45, 0, 0.012, 0.495];
   const lightColors = [1, 0.15, 0.1, 0.2, 1, 0.35, 1, 1, 1, 1, 1, 1];
   const lightPhases = [-1, -1, 0.5, 2.6];
   const lightGeometry = new THREE.BufferGeometry();
@@ -433,19 +624,25 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, accent
   const visit = { state: 'waiting', until: reduceMotion ? 0 : 2.5, start: new THREE.Vector3(), velocity: new THREE.Vector3(), heading: new THREE.Vector3(), up: new THREE.Vector3(), length: 1, cruise: 30, age: 0, label: CLASSES[0] };
   function planVisit() {
     const { width, height, free, narrow } = view;
-    const leftEdge = narrow ? width * 0.35 : Math.max(free + 30, width * 0.45);
-    const span = Math.max(width - 40 - leftEdge, 120);
+    // As long as a third of the free sky, within reason; the hull's centre keeps half its length
+    // clear of the text and the hero's edges.
+    // On a phone the text fills the hero, so the destroyer keeps low and small, over the planet's
+    // limb beside the status strip.
+    const start = narrow ? width * 0.46 : Math.max(free + 30, width * 0.45);
+    const lengthPx = narrow ? Math.min(width * 0.26, 100) : THREE.MathUtils.clamp((width - start) * 0.42, 180, 340);
+    const leftEdge = start + lengthPx * 0.55;
+    const rightEdge = width - 24 - lengthPx * 0.7;
+    const span = Math.max(rightEdge - leftEdge, 40);
     const direction = Math.random() < 0.6 ? -1 : 1;
-    const x = direction < 0 ? leftEdge + span * (0.55 + 0.35 * Math.random()) : leftEdge + span * (0.05 + 0.3 * Math.random());
-    const y = height * (narrow ? 0.2 + 0.12 * Math.random() : 0.12 + 0.16 * Math.random());
-    const depth = -9 - Math.random() * 5;
+    const x = direction < 0 ? leftEdge + span * (0.7 + 0.3 * Math.random()) : leftEdge + span * (0.3 * Math.random());
+    const y = narrow ? height * (0.74 + 0.05 * Math.random()) : THREE.MathUtils.clamp(height * (0.22 + 0.16 * Math.random()), lengthPx * 0.32 + 12, height * 0.55);
+    const depth = -7 - Math.random() * 4;
     worldAt(x, y, depth, visit.start);
-    const lengthPx = narrow ? Math.min(width * 0.3, 120) : Math.min(Math.max(width * 0.14, 140), 240);
     visit.length = (lengthPx / height) * 2 * (10 - depth) * tanHalf;
     visit.cruise = reduceMotion ? 30 : 26 + Math.random() * 12;
-    const travelPx = span * (0.45 + 0.2 * Math.random());
+    const travelPx = span * (0.55 + 0.15 * Math.random());
     const travel = (travelPx / height) * 2 * (10 - depth) * tanHalf;
-    visit.velocity.set(direction * travel, (Math.random() - 0.5) * travel * 0.12, travel * (0.15 + 0.2 * Math.random())).divideScalar(visit.cruise);
+    visit.velocity.set(direction * travel, (Math.random() - 0.5) * travel * 0.08, 0).divideScalar(visit.cruise);
     // The hull points where it goes, turned a little toward the viewer so the deck shows.
     visit.heading.copy(visit.velocity).normalize();
     visit.heading.z += 0.25;
@@ -564,6 +761,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, accent
     destroyer.position.copy(position);
     destroyer.scale.setScalar(visit.length);
     orient(destroyer, visit.heading, visit.up);
+    uniforms.uRotation.value.setFromMatrix4(new THREE.Matrix4().makeRotationFromQuaternion(destroyer.quaternion));
     uniforms.uStretch.value = stretch;
     uniforms.uAnchor.value = anchor;
     uniforms.uWarp.value = warp;
@@ -572,15 +770,27 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, accent
     lightUniforms.uShow.value = warp < 0.05 && visit.state === 'cruising' ? 1 : 0;
     lightUniforms.uSize.value = Math.max(3, (visit.length / (2 * (10 - position.z) * tanHalf)) * view.height * 0.035) * view.ratio;
 
-    // The brackets: locked on while it cruises, closing in over half a second after it arrives.
+    // The brackets: the hull's bounds as the camera sees them, locked on while it cruises and
+    // closing in over half a second after it arrives.
     if (visit.state === 'cruising') {
-      screenOf(position, screen);
-      const radius = (visit.length * 0.55 / (2 * (10 - position.z) * tanHalf)) * view.height;
+      destroyer.updateMatrixWorld(true);
+      camera.updateMatrixWorld();
+      let left = Infinity;
+      let top = Infinity;
+      let right = -Infinity;
+      let bottom = -Infinity;
+      for (const corner of hullCorners) {
+        screenOf(localPoint.copy(corner).applyMatrix4(destroyer.matrixWorld), screen);
+        left = Math.min(left, screen.x);
+        right = Math.max(right, screen.x);
+        top = Math.min(top, screen.y);
+        bottom = Math.max(bottom, screen.y);
+      }
       const lock = Math.min(1, visit.age / 0.6);
-      const size = radius * (1 + 1.4 * Math.pow(1 - lock, 2));
-      contact.style.transform = `translate(${(screen.x - size).toFixed(1)}px, ${(screen.y - size * 0.6).toFixed(1)}px)`;
-      contact.style.width = `${(size * 2).toFixed(1)}px`;
-      contact.style.height = `${(size * 1.2).toFixed(1)}px`;
+      const pad = 8 + 70 * Math.pow(1 - lock, 2);
+      contact.style.transform = `translate(${(left - pad).toFixed(1)}px, ${(top - pad).toFixed(1)}px)`;
+      contact.style.width = `${(right - left + pad * 2).toFixed(1)}px`;
+      contact.style.height = `${(bottom - top + pad * 2).toFixed(1)}px`;
       contact.classList.add('is-locked');
     } else {
       contact.classList.remove('is-locked');
@@ -656,6 +866,14 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, accent
   }
 
   return {
+    // The star calls the fleet: the destroyer drops out of hyperspace now, or if it is already
+    // here it jumps away, and the fighters make a pass if they are not making one.
+    summon() {
+      if (reduceMotion) return;
+      if (visit.state === 'waiting') visit.until = clock;
+      else if (visit.state === 'cruising') visit.age = Math.max(visit.age, visit.cruise);
+      if (!pass.active) pass.next = clock + 0.4;
+    },
     layout({ width, height, free, narrow, ratio }) {
       Object.assign(view, { width, height, free, narrow, ratio });
       if (reduceMotion) visit.state = 'waiting';
