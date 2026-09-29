@@ -193,7 +193,66 @@ const SKY_FRAGMENT = /* glsl */ `
   uniform vec4 uMoonB;
   uniform vec3 uMoonColorA;
   uniform vec3 uMoonColorB;
+  uniform vec3 uBetaR;      // Rayleigh scattering at the ground, per planet radius, per channel
+  uniform float uBetaM;     // Mie scattering at the ground, the same for every channel
+  uniform vec3 uAirShape;   // the Rayleigh and Mie scale heights, and the shell's top
   ${NOISE}
+
+  // The atmosphere, scattered for real: a shell of air over the planet, thinning exponentially
+  // with height, its molecules (Rayleigh) scattering the short wavelengths of the world's air colour
+  // most and its dust (Mie) scattering all of them, mostly forward. Along each view ray through the
+  // shell, light from the sun is gathered at ten points, each dimmed by the air between it and the
+  // sun (four more points) and between it and the viewer. So the limb glows where the sun is behind
+  // it, the light that reaches the ground near the terminator has lost its short wavelengths and
+  // reddens, and a thin blue veil lies over the day side. Heights are in planet radii.
+  vec2 airDensity(vec3 p) {
+    float h = max(length(p) - 1.0, 0.0);
+    return exp(-h / uAirShape.xy);
+  }
+  vec3 extinction(vec2 depth) {
+    return exp(-(uBetaR * depth.x + uBetaM * 1.1 * depth.y));
+  }
+  // The sunlight left at p after crossing the air toward the sun; none in the planet's shadow,
+  // softened over the width of the terminator.
+  vec3 sunlightAt(vec3 p, vec3 s) {
+    float b = dot(p, s);
+    float c = dot(p, p);
+    float closest = sqrt(max(c - b * b, 0.0));
+    float lit = b < 0.0 ? smoothstep(0.992, 1.004, closest) : 1.0;
+    float exitAt = -b + sqrt(max(b * b - c + uAirShape.z * uAirShape.z, 0.0));
+    float stepLength = exitAt * 0.25;
+    vec2 depth = vec2(0.0);
+    for (int i = 0; i < 4; i++) depth += airDensity(p + s * ((float(i) + 0.5) * stepLength)) * stepLength;
+    return extinction(depth) * lit;
+  }
+  // The light the air scatters toward the viewer along the ray through q, and how much of what
+  // lies behind it gets through. The view is along -z; the ray ends at the ground or leaves the
+  // shell again.
+  void scatter(vec2 q, float r, vec3 sun, out vec3 gathered, out vec3 through) {
+    gathered = vec3(0.0);
+    through = vec3(1.0);
+    if (r >= uAirShape.z) return;
+    float top = sqrt(uAirShape.z * uAirShape.z - r * r);
+    float bottom = r < 1.0 ? sqrt(1.0 - r * r) : -top;
+    float stepLength = (top - bottom) * 0.1;
+    float mu = -sun.z;
+    float phaseR = 0.0596831 * (1.0 + mu * mu);
+    const float g = 0.76;
+    float phaseM = 0.0795775 * (1.0 - g * g) / pow(1.0 + g * g - 2.0 * g * mu, 1.5);
+    vec2 depth = vec2(0.0);
+    vec3 sumR = vec3(0.0);
+    vec3 sumM = vec3(0.0);
+    for (int i = 0; i < 10; i++) {
+      vec3 p = vec3(q, top - (float(i) + 0.5) * stepLength);
+      vec2 d = airDensity(p) * stepLength;
+      depth += d;
+      vec3 light = extinction(depth) * sunlightAt(p, sun);
+      sumR += d.x * light;
+      sumM += d.y * light;
+    }
+    gathered = (sumR * uBetaR * phaseR + sumM * uBetaM * phaseM) * uSunColor * 4.0;
+    through = extinction(depth);
+  }
 
   // A small moon: a crater-mottled disc lit by the same sun, usually a crescent, since the sun is
   // behind the planet.
@@ -342,7 +401,9 @@ const SKY_FRAGMENT = /* glsl */ `
 
         float ndl = dot(n, sun);
         float day = smoothstep(-0.06, 0.3, ndl);
-        vec3 lit = albedo * max(ndl, 0.0) * uSunColor * 1.3;
+        // The sunlight that reaches the ground has crossed the air, reddening toward the terminator.
+        vec3 sunlight = uSunColor * sunlightAt(n * 1.0005, sun);
+        vec3 lit = albedo * max(ndl, 0.0) * sunlight * 1.35;
 
         // The sun's glint on open water, strongest where the lit crescent meets the limb.
         vec3 h = sun + vec3(0.0, 0.0, 1.0);
@@ -352,7 +413,7 @@ const SKY_FRAGMENT = /* glsl */ `
         // Only on real water: a dry world's basins, an undercity or a lava plain would sparkle as
         // their edges roll through the highlight.
         float glint = pow(max(dot(n, h), 0.0), 120.0) * 1.8 + pow(max(dot(n, h), 0.0), 20.0) * 0.1;
-        lit += uSunColor * glint * water * day * uWorldC.x;
+        lit += sunlight * glint * water * day * uWorldC.x;
 
         // The night side: the planet's own dark teal, with its continents and cloud lit faintly by
         // the cyan nebula above, and the cities of the populous land glittering, so the turning
@@ -374,16 +435,15 @@ const SKY_FRAGMENT = /* glsl */ `
           surface += vec3(1.0, 0.24, 0.03) * molten * (1.5 + 0.5 * sin(uTime * 1.3 + rift * 20.0));
         }
 
-        // Haze thickening towards the limb, lit where the air is.
-        float haze = pow(1.0 - z, 5.0);
-        surface += uAir * haze * (airLit * 0.18 + mie * 0.5);
         col = mix(col, surface, onPlanet);
       }
 
-      // The air outside the disc, falling off with height, and the site's cyan line on the edge.
-      float height = max(r - 1.0, 0.0) / airHeight;
-      float air = exp(-height * 2.1) * (1.0 - onPlanet * 0.6);
-      col += uAir * air * (airLit * 0.4 + mie * 1.1) * step(1.0 - 2.0 / radius, r);
+      // The air over it all, the ground and the stars behind the limb alike. Then the site's cyan
+      // line on the edge.
+      vec3 gathered;
+      vec3 through;
+      scatter(q, r, sun, gathered, through);
+      col = col * through + gathered;
       float line = exp(-abs(r - 1.0) * radius / (1.1 * uRatio));
       col += uAccent * line * (0.2 + 0.9 * airLit + 0.6 * mie);
 
@@ -698,6 +758,22 @@ function jewelGeometry() {
   return geometry;
 }
 
+// The world's air, as scattering coefficients: its molecules scatter each channel in proportion to
+// the air colour r3-worlds.js gives it, strongest in its dominant channel (for a blue-aired world,
+// much as Earth's air does). How strongly, how dusty and how deep come from the world's ranges,
+// picked within for this visit.
+function atmosphereOf(world) {
+  const air = new THREE.Color(world.air).convertSRGBToLinear();
+  const strongest = Math.max(air.r, air.g, air.b, 1e-3);
+  const beta = new THREE.Vector3(air.r, air.g, air.b).divideScalar(strongest).multiplyScalar(12 * world.scatter).addScalar(0.3);
+  const rayleighHeight = 0.011 * world.thickness;
+  return {
+    uBetaR: { value: beta },
+    uBetaM: { value: 1.3 * world.dust },
+    uAirShape: { value: new THREE.Vector3(rayleighHeight, 0.0035 * Math.sqrt(world.thickness), 1 + rayleighHeight * 5.5) },
+  };
+}
+
 // How much a world's lowland is open water, from how blue it is: none on a gas giant or a city
 // from pole to pole, whatever colour their lowland.
 function wetness(world) {
@@ -831,6 +907,7 @@ function start(hero, art) {
     uMoonB: { value: new THREE.Vector4(0, 0, 0, 0) },
     uMoonColorA: { value: worldColor('#9a948c').lerp(worldColor('#c2ae92'), world.moonSeeds[0]) },
     uMoonColorB: { value: worldColor('#8c9096').lerp(worldColor('#b8a8a0'), world.moonSeeds[3]) },
+    ...atmosphereOf(world),
   };
   const ringNormal = skyUniforms.uRingNormal.value.clone();
   const skyMaterial = fullscreenMaterial(SKY_FRAGMENT, skyUniforms);
