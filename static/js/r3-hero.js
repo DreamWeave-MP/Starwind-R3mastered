@@ -1059,6 +1059,12 @@ function start(hero, art) {
   hero.addEventListener('pointerdown', (event) => {
     if (event.target.closest('a, button, input, summary, [role="button"]')) return;
     const bounds = hero.getBoundingClientRect();
+    // A ship under the pointer is shot down, before the star or the planet take the click.
+    if (fleet.shoot(event.clientX - bounds.left, event.clientY - bounds.top)) {
+      event.r3Taken = true;
+      requestFrame();
+      return;
+    }
     const dx = event.clientX - bounds.left - jewelPx.x;
     const dy = event.clientY - bounds.top - jewelPx.y;
     if (dx * dx + dy * dy > (jewelPx.radius * 1.6) ** 2) return;
@@ -1099,7 +1105,7 @@ function start(hero, art) {
   }
   const interactive = 'a, button, input, summary, [role="button"]';
   hero.addEventListener('pointerdown', (event) => {
-    if (!event.isPrimary || event.button > 0 || event.target.closest(interactive)) return;
+    if (event.r3Taken || !event.isPrimary || event.button > 0 || event.target.closest(interactive)) return;
     const point = heroPoint(event);
     if (overJewel(point) || !overPlanet(point)) return;
     planetDrag.active = true;
@@ -1117,7 +1123,7 @@ function start(hero, art) {
     if (!planetDrag.active) {
       const point = heroPoint(event);
       const onLink = event.target.closest(interactive);
-      hero.style.cursor = !onLink && overJewel(point) ? 'pointer' : (!onLink && overPlanet(point) ? 'grab' : '');
+      hero.style.cursor = onLink ? '' : fleet.aimed(point.x, point.y) ? 'crosshair' : overJewel(point) ? 'pointer' : overPlanet(point) ? 'grab' : '';
       return;
     }
     if (event.pointerId !== planetDrag.id) return;
@@ -1333,6 +1339,12 @@ function start(hero, art) {
 
     // The ships, and any hyperspace flash they make.
     const shipFlash = fleet.update(reduceMotion ? 0 : dt);
+    // An explosion shakes the camera for a moment.
+    if (shipFlash.shake > 0) {
+      camera.position.x += (Math.random() - 0.5) * shipFlash.shake * 0.16;
+      camera.position.y += (Math.random() - 0.5) * shipFlash.shake * 0.12;
+      camera.updateMatrixWorld();
+    }
     compositeUniforms.uFlashPx.value.set(shipFlash.x * ratio, (height - shipFlash.y) * ratio);
     compositeUniforms.uFlash.value = shipFlash.strength;
     compositeUniforms.uFlashSize.value = shipFlash.size * (narrow ? 0.6 : 1);

@@ -220,6 +220,76 @@ const LINE_FRAGMENT = /* glsl */ `
   }
 `;
 
+// Explosions: fire, sparks and burning debris as points whose whole flight is worked out here from
+// where and when each was born, so the CPU only writes a particle once. Fire swells and cools from
+// white through yellow and orange to a dull red; sparks fly on straight and small; debris burns
+// orange and slows.
+const PARTICLE_VERTEX = /* glsl */ `
+  attribute vec3 aVelocity;
+  attribute vec4 aLife;      // birth, lifetime, size, kind: 0 fire, 1 spark, 2 debris
+  uniform float uNow;
+  uniform float uScale;      // device pixels per world unit at a distance of one
+  uniform float uMaxSize;    // no sprite larger than this, device pixels
+  varying float vAge;
+  varying float vKind;
+  void main() {
+    float t = uNow - aLife.x;
+    float age = t / max(aLife.y, 1e-3);
+    vAge = age;
+    vKind = aLife.w;
+    if (age < 0.0 || age > 1.0) {
+      gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+      gl_PointSize = 0.0;
+      return;
+    }
+    float slowing = aLife.w > 0.5 && aLife.w < 1.5 ? 0.15 : 0.55;
+    vec3 p = position + aVelocity * t * (1.0 - slowing * age);
+    vec4 view = modelViewMatrix * vec4(p, 1.0);
+    gl_Position = projectionMatrix * view;
+    float grow = aLife.w < 0.5 ? 0.45 + 1.6 * sqrt(age) : 1.0;
+    gl_PointSize = min(aLife.z * grow * uScale / max(-view.z, 0.1), uMaxSize);
+  }
+`;
+
+const PARTICLE_FRAGMENT = /* glsl */ `
+  varying float vAge;
+  varying float vKind;
+  void main() {
+    float r = length(gl_PointCoord - 0.5) * 2.0;
+    if (r > 1.0) discard;
+    vec3 col;
+    if (vKind < 0.5) {
+      vec3 hot = mix(vec3(1.9, 1.75, 1.5), vec3(1.7, 1.05, 0.3), smoothstep(0.0, 0.18, vAge));
+      vec3 cooling = mix(vec3(1.1, 0.38, 0.08), vec3(0.25, 0.05, 0.02), smoothstep(0.35, 0.9, vAge));
+      col = mix(hot, cooling, smoothstep(0.15, 0.45, vAge)) * (1.0 - r * r) * pow(1.0 - vAge, 1.2);
+    } else if (vKind < 1.5) {
+      col = vec3(2.6, 2.1, 1.3) * (1.0 - smoothstep(0.2, 1.0, r)) * (1.0 - vAge);
+    } else {
+      col = vec3(2.2, 0.9, 0.25) * (1.0 - smoothstep(0.3, 1.0, r)) * (1.0 - vAge * vAge);
+    }
+    gl_FragColor = vec4(col, 1.0);
+  }
+`;
+
+// The shockwave: a ring blown out across the ship's plane, bright at its leading edge.
+const SHOCK_VERTEX = /* glsl */ `
+  varying float vRadius;
+  void main() {
+    vRadius = length(position.xy);
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`;
+
+const SHOCK_FRAGMENT = /* glsl */ `
+  uniform float uAge;
+  varying float vRadius;
+  void main() {
+    float edge = smoothstep(0.82, 0.985, vRadius) * (1.0 - smoothstep(0.985, 1.0, vRadius));
+    vec3 col = mix(vec3(1.3, 1.5, 1.7), vec3(0.9, 0.45, 0.25), uAge) * edge * pow(1.0 - uAge, 1.5);
+    gl_FragColor = vec4(col, 1.0);
+  }
+`;
+
 // Laser bolts: short segments, each in its faction's colour.
 const BOLT_VERTEX = /* glsl */ `
   attribute float aAlpha;
@@ -507,6 +577,81 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
   const bolts = Array.from({ length: BOLTS }, () => ({ age: Infinity, position: new THREE.Vector3(), direction: new THREE.Vector3(), color: new THREE.Color() }));
   let nextBolt = 0;
 
+  // Explosions: a pool of particles written round-robin, and a few shockwave rings.
+  const PARTICLES = 1600;
+  const particleGeometry = new THREE.BufferGeometry();
+  particleGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(PARTICLES * 3), 3));
+  particleGeometry.setAttribute('aVelocity', new THREE.BufferAttribute(new Float32Array(PARTICLES * 3), 3));
+  particleGeometry.setAttribute('aLife', new THREE.BufferAttribute(new Float32Array(PARTICLES * 4).fill(-1000), 4));
+  const particleUniforms = { uNow: { value: 0 }, uScale: { value: 1 }, uMaxSize: { value: 64 } };
+  const particles = new THREE.Points(particleGeometry, new THREE.ShaderMaterial({
+    vertexShader: PARTICLE_VERTEX,
+    fragmentShader: PARTICLE_FRAGMENT,
+    uniforms: particleUniforms,
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  }));
+  particles.frustumCulled = false;
+  scene.add(particles);
+  let nextParticle = 0;
+  const direction = new THREE.Vector3();
+  // count particles of a kind from origin, their speed, size and life drawn from the given ranges.
+  function emit(origin, count, kind, [speedLow, speedHigh], [sizeLow, sizeHigh], [lifeLow, lifeHigh]) {
+    const start = particleGeometry.getAttribute('position');
+    const velocity = particleGeometry.getAttribute('aVelocity');
+    const life = particleGeometry.getAttribute('aLife');
+    for (let i = 0; i < count; i++) {
+      const index = nextParticle;
+      nextParticle = (nextParticle + 1) % PARTICLES;
+      direction.set(random() * 2 - 1, random() * 2 - 1, random() * 2 - 1);
+      if (direction.lengthSq() < 1e-4) direction.set(0, 1, 0);
+      direction.normalize().multiplyScalar(speedLow + (speedHigh - speedLow) * Math.pow(random(), 0.6));
+      start.setXYZ(index, origin.x, origin.y, origin.z);
+      velocity.setXYZ(index, direction.x, direction.y, direction.z);
+      life.setXYZW(index, clock + random() * 0.06, lifeLow + (lifeHigh - lifeLow) * random(), sizeLow + (sizeHigh - sizeLow) * random(), kind);
+    }
+    start.needsUpdate = true;
+    velocity.needsUpdate = true;
+    life.needsUpdate = true;
+  }
+  const shocks = [0, 1, 2].map(() => {
+    const uniforms = { uAge: { value: 1 } };
+    const mesh = new THREE.Mesh(new THREE.RingGeometry(0.0, 1.0, 96, 1), new THREE.ShaderMaterial({
+      vertexShader: SHOCK_VERTEX,
+      fragmentShader: SHOCK_FRAGMENT,
+      uniforms,
+      transparent: true,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending,
+    }));
+    mesh.frustumCulled = false;
+    mesh.visible = false;
+    scene.add(mesh);
+    return { mesh, uniforms, age: Infinity, reach: 1, life: 1.4 };
+  });
+  let nextShock = 0;
+  const flatten = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI / 2);
+  function shockwave(origin, quaternion, reach) {
+    const shock = shocks[nextShock];
+    nextShock = (nextShock + 1) % shocks.length;
+    shock.age = 0;
+    shock.reach = reach;
+    shock.mesh.position.copy(origin);
+    shock.mesh.quaternion.copy(quaternion).multiply(flatten);
+    shock.mesh.visible = true;
+  }
+  let shake = 0;
+
+  // A fireball: fire, sparks and some burning debris, sized to what blew up. The intensity sets how
+  // much of each there is, and only a little how far it reaches.
+  function blast(origin, size, intensity = 1) {
+    emit(origin, Math.round(40 * intensity), 0, [size * 0.05, size * (0.16 + 0.05 * intensity)], [size * 0.03, size * (0.06 + 0.008 * intensity)], [0.7, 1.1 + 0.15 * intensity]);
+    emit(origin, Math.round(18 * intensity), 1, [size * 0.3, size * (0.65 + 0.1 * intensity)], [size * 0.006, size * 0.012], [0.5, 1.1]);
+    emit(origin, Math.round(5 * intensity), 2, [size * 0.1, size * 0.35], [size * 0.014, size * 0.024], [1.4, 2.6]);
+  }
+
   // The contact brackets: a capital ship is tracked like a target on a scope.
   const contact = document.createElement('div');
   contact.className = 'r3-contact';
@@ -604,6 +749,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     }
     for (const fighter of allFighters) {
       fighter.group.visible = false;
+      fighter.dead = false;
       for (const trail of fighter.trails) trail.samples.length = 0;
     }
   }
@@ -675,6 +821,30 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
         visit.age = 0;
         flashAt(position, 0.9, 0.7);
       }
+    } else if (visit.state === 'exploding') {
+      // A chain of blasts along the hull, then the whole ship at once.
+      position.addScaledVector(visit.velocity, visit.age * 0.6);
+      boost = 0;
+      while (visit.blasts < 7 && visit.age >= visit.blasts * 0.17) {
+        const corner = ship.design.extremes[Math.floor(random() * ship.design.extremes.length)];
+        localPoint.copy(corner).multiplyScalar(0.3 + 0.6 * random()).applyMatrix4(ship.group.matrixWorld);
+        blast(localPoint, visit.length, 0.8);
+        flashAt(localPoint, 0.35, 0.5);
+        shake = Math.max(shake, 0.25);
+        visit.blasts += 1;
+      }
+      if (visit.age >= 1.3) {
+        blast(position, visit.length, 5);
+        shockwave(position, ship.group.quaternion, visit.length * 1.8);
+        flashAt(position, 1.5, 1.6);
+        shake = 1;
+        ship.group.visible = false;
+        contact.classList.remove('is-locked', 'is-lost');
+        visit.state = 'waiting';
+        visit.until = clock + 3.5 + random() * 3;
+        visit.start.copy(position);
+        return;
+      }
     } else if (visit.state === 'leaving') {
       const l = Math.min(1, visit.age / 0.4);
       stretch = 1 + 90 * Math.pow(l, 2.4);
@@ -701,8 +871,9 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     ship.lights.uniforms.uSize.value = Math.max(3, (visit.length / (2 * (10 - position.z) * tanHalf)) * view.height * 0.035) * view.ratio;
 
     // The brackets: the hull's bounds as the camera sees them, locked on while it cruises and
-    // closing in over half a second after it arrives.
-    if (visit.state === 'cruising') {
+    // closing in over half a second after it arrives. They are kept, too, to aim at.
+    visit.rect = null;
+    if (visit.state === 'cruising' || visit.state === 'exploding') {
       ship.group.updateMatrixWorld(true);
       camera.updateMatrixWorld();
       let left = Infinity;
@@ -722,6 +893,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
       contact.style.width = `${(right - left + pad * 2).toFixed(1)}px`;
       contact.style.height = `${(bottom - top + pad * 2).toFixed(1)}px`;
       contact.classList.add('is-locked');
+      visit.rect = { left, top, right, bottom };
     } else {
       contact.classList.remove('is-locked');
     }
@@ -800,6 +972,10 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     const [p0, p1, p2, p3] = pass.points;
     for (const flight of pass.flights) {
       flight.fighters.forEach((fighter, index) => {
+        if (fighter.dead) {
+          fighter.group.visible = false;
+          return;
+        }
         const delay = flight.delay + index * 0.16;
         const s = Math.min(1, Math.max(0, (pass.age - delay) / pass.duration));
         const eased = s * s * (3 - 2 * s) * 0.35 + s * 0.65;
@@ -843,7 +1019,59 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     }
   }
 
+  // What is under a point of the hero, if anything can be shot there: a fighter first, being
+  // smaller and nearer, then the capital ship inside its brackets.
+  function targetAt(x, y) {
+    for (const flight of pass.active ? pass.flights : []) {
+      for (const fighter of flight.fighters) {
+        if (fighter.dead || !fighter.group.visible) continue;
+        screenOf(fighter.group.position, screen);
+        const radius = (0.35 / (2 * Math.max(10 - fighter.group.position.z, 0.5) * tanHalf)) * view.height + 12;
+        if ((screen.x - x) ** 2 + (screen.y - y) ** 2 < radius * radius) return { fighter };
+      }
+    }
+    const rect = visit.rect;
+    if (rect && visit.state === 'cruising') {
+      const insetX = (rect.right - rect.left) * 0.1;
+      const insetY = (rect.bottom - rect.top) * 0.1;
+      if (x > rect.left + insetX && x < rect.right - insetX && y > rect.top + insetY && y < rect.bottom - insetY) return { capital: visit.ship };
+    }
+    return null;
+  }
+
   return {
+    // Whether a click at this point of the hero would hit a ship, for the cursor.
+    aimed(x, y) {
+      return !!targetAt(x, y);
+    },
+    // A click on a ship blows it up. Returns whether it hit one.
+    shoot(x, y) {
+      const target = targetAt(x, y);
+      if (!target) return false;
+      if (target.fighter) {
+        const fighter = target.fighter;
+        fighter.dead = true;
+        fighter.group.visible = false;
+        if (!reduceMotion) {
+          blast(fighter.group.position, 0.9, 1);
+          flashAt(fighter.group.position, 0.8, 0.5);
+          shake = Math.max(shake, 0.3);
+        }
+      } else if (reduceMotion) {
+        visit.ship.group.visible = false;
+        visit.state = 'waiting';
+        visit.until = clock + 5;
+        contact.classList.remove('is-locked');
+      } else {
+        visit.start.addScaledVector(visit.velocity, visit.age);
+        visit.state = 'exploding';
+        visit.age = 0;
+        visit.blasts = 0;
+        contactLabel.textContent = `Contact lost ▸ ${contactLabel.textContent.split(' ▸ ').pop()}`;
+        contact.classList.add('is-lost');
+      }
+      return true;
+    },
     // The star calls the fleet: a capital ship drops out of hyperspace now, or if one is already
     // here it jumps away, and the fighters make a pass if they are not making one.
     summon() {
@@ -860,6 +1088,18 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     update(dt) {
       clock += dt;
       flash.strength = Math.max(0, flash.strength - dt * 3.2);
+      shake = Math.max(0, shake - dt * 2.2);
+      flash.shake = shake;
+      particleUniforms.uNow.value = clock;
+      particleUniforms.uScale.value = (view.height * view.ratio) / (2 * tanHalf);
+      particleUniforms.uMaxSize.value = view.height * view.ratio * 0.14;
+      for (const shock of shocks) {
+        shock.age += dt / shock.life;
+        shock.mesh.visible = shock.age < 1;
+        if (!shock.mesh.visible) continue;
+        shock.uniforms.uAge.value = shock.age;
+        shock.mesh.scale.setScalar(shock.reach * (0.05 + Math.sqrt(shock.age)));
+      }
       updateCapital(dt);
       updateFighters(dt);
       updateBolts(dt);
