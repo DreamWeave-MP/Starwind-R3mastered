@@ -1894,13 +1894,19 @@ function start(hero, art) {
       if (up.lengthSq() < 1e-6) up.set(0, 0, -1);
       up.normalize();
       right.crossVectors(up, centre).normalize();
-      let size = THREE.MathUtils.clamp(Math.min((rightmost - left) / 2 * 0.98, (high - low) / 2 * 1.1), 0.16, 0.9);
-      // A near-flat horizon shows only a band of the disc: there the face is large and peeks over
-      // it, eyes and brow above the line, the rest below.
-      if (high - low < 0.45 * (rightmost - left)) {
-        size = THREE.MathUtils.clamp((rightmost - left) * 0.32, 0.2, 0.9);
-        centre.addScaledVector(up, -(0.2 * size + (high - low) * 0.15)).normalize();
-        up.set(0, 1, 0).addScaledVector(centre, -centre.y).normalize();
+      // Fitted inside what shows, so no edge of the stage cuts it; the head fills 88% of its
+      // texture's height, which leaves a little room. A near-flat horizon shows only a band of the
+      // disc: there the band's height sets the size, and the face sits a little below the band's
+      // middle, since the limb above foreshortens it. [r3:stage]
+      const thin = high - low < 0.45 * (rightmost - left);
+      const size = thin
+        ? THREE.MathUtils.clamp((high - low) / 2, 0.04, 0.9)
+        : THREE.MathUtils.clamp(Math.min((rightmost - left) / 2, (high - low) / 2) * 1.04, 0.12, 0.9);
+      if (thin) {
+        centre.addScaledVector(up, -(high - low) * 0.03).normalize();
+        up.set(0, 1, 0).addScaledVector(centre, -centre.y);
+        if (up.lengthSq() < 1e-6) up.set(0, 0, -1);
+        up.normalize();
         right.crossVectors(up, centre).normalize();
       }
       const body = skyUniforms.uBody.value;
