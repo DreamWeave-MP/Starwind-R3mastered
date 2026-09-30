@@ -13,7 +13,7 @@
 // patrol or the two at war, so the same few primitives make many different skies.
 
 import * as THREE from './vendor/three.module.min.js';
-import { arc170 } from './r3-shipyard-lore.js'; // [r3:lore]
+import { arc170, interdictor, sithFighter } from './r3-shipyard-lore.js'; // [r3:lore]
 
 // Geometry --------------------------------------------------------------------------------------
 
@@ -253,7 +253,7 @@ function hammerhead(random) {
   };
 }
 
-const CAPITALS = { wedge, ringAndCore, organicCruiser, hammerhead };
+const CAPITALS = { wedge, ringAndCore, organicCruiser, hammerhead, interdictor }; // [r3:lore] interdictor
 
 // [r3:lore] options: a side's proportions for this hull (FACTIONS[side].shapes[kind]).
 export function buildCapital(kind, random, options = undefined) {
@@ -344,7 +344,7 @@ function trifighter() {
   return { geometry: merge(parts), engines: [[0, 0, -0.13]], cannons: tips };
 }
 
-const FIGHTERS = { xwing, tie, awing, trifighter, arc170 }; // [r3:lore] arc170
+const FIGHTERS = { xwing, tie, awing, trifighter, arc170, sithFighter }; // [r3:lore] the last two
 
 export function buildFighter(kind) {
   return FIGHTERS[kind]();
@@ -372,8 +372,8 @@ export const FACTIONS = {
     capitals: [['organicCruiser', 'MC85 Raddus · 3,438 m'], ['hammerhead', 'Sphyrna-class · 117 m']] },
   oldRepublic: { name: 'Old Republic', hull: '#c4bca8', paint: '#8a2a22', engine: '#9fd8ff', laser: '#ff6a3a', fighters: ['awing'],
     capitals: [['hammerhead', 'Hammerhead-class · 315 m'], ['hammerhead', 'Endar Spire · Hammerhead-class · 315 m']] },
-  sith: { name: 'Sith Empire', hull: '#3e3a40', paint: '#8a1a1a', engine: '#ff6a4a', laser: '#ff3a3a', fighters: ['tie'],
-    capitals: [['wedge', 'Leviathan · Interdictor-class · 600 m'], ['wedge', 'Interdictor-class · 600 m']] },
+  sith: { name: 'Sith Empire', hull: '#3e3a40', paint: '#8a1a1a', engine: '#ff6a4a', laser: '#ff3a3a', fighters: ['sithFighter'],
+    capitals: [['interdictor', 'Leviathan · Interdictor-class · 600 m'], ['interdictor', 'Interdictor-class · 600 m']] },
 };
 
 // An era's two sides.
