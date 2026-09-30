@@ -1,0 +1,31 @@
+{#- The Game Guide by world: every guide page under each world its Key locations name, from the same
+    index the hero's survey readout reads (macros/r3-guide.html). Each world is an anchor,
+    #world-<slug>, which is where the readout's GUIDE link lands. -#}
+{% extends "docs/base.html" %}
+{% import "macros/r3-guide.html" as r3_guide %}
+
+{% block docs_content %}
+    {{ page.content | safe }}
+    {%- set index_text = r3_guide::index() %}
+    {%- set index = load_data(literal=index_text, format="json") %}
+    <nav class="r3-worlds__index" aria-label="Worlds in the guide">
+        <ul>
+        {%- for name, world in index.worlds %}
+            <li><a href="#world-{{ world.slug }}">{{ name }}</a> <span class="r3-worlds__count">{{ world.count }}</span></li>
+        {%- endfor %}
+        </ul>
+    </nav>
+    {%- for name, world in index.worlds %}
+    <section class="r3-worlds__world" id="world-{{ world.slug }}" aria-labelledby="world-{{ world.slug }}-title">
+        <h2 id="world-{{ world.slug }}-title">{{ name }} <small>{{ world.count }} {% if world.count == 1 %}entry{% else %}entries{% endif %}</small></h2>
+        {%- for category, items in world.entries | group_by(attribute="c") %}
+        <h3>{% if category %}{{ category }}{% else %}Other{% endif %}</h3>
+        <ul>
+        {%- for item in items | sort(attribute="t") %}
+            <li><a href="{{ item.u | safe }}">{{ item.t }}</a>{% if item.j %} <code>{{ item.j }}</code>{% endif %}</li>
+        {%- endfor %}
+        </ul>
+        {%- endfor %}
+    </section>
+    {%- endfor %}
+{% endblock docs_content %}
