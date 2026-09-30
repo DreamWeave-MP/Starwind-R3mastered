@@ -196,7 +196,9 @@ const SHIP_FRAGMENT = /* glsl */ `
     col += uSunColor * pow(max(dot(n, h), 0.0), glassy ? 160.0 : (solar ? 24.0 : 48.0)) * (glassy ? 2.0 : (solar ? 0.12 : 0.45)) * tone;
     float facing = max(dot(n, v), 0.0);
     col += uAir * pow(1.0 - facing, 4.0) * 0.35;
-    if (bubble) col += uEngine * (pow(1.0 - facing, 2.5) * 0.9 + 0.06); // [r3:lore]
+    // [r3:lore] A bubble's rim takes the drive's colour, and a lived-in one glows with lamplight within,
+    // as Otoh Gunga's do.
+    if (bubble) col += uEngine * (pow(1.0 - facing, 2.5) * 0.9 + 0.06) + vec3(0.95, 0.72, 0.4) * (0.1 + 0.16 * facing) * uWindows;
     col += uSunColor * pow(1.0 - facing, 3.0) * max(dot(-v, uSunDir), 0.0) * 0.9;
 
     col += vec3(1.0, 0.84, 0.58) * ports * 2.6 * uWindows;
