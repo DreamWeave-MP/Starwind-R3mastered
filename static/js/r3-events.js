@@ -447,10 +447,12 @@ export function createDirector({ kit, fleet = null, memory = null, random = kit.
   // Where in the hero a ship may go: the free sky beside the text, or low on a phone.
   function lane({ depth = -8, size = 200, high = false } = {}) {
     const { width, height, free, narrow } = view;
-    const start = narrow ? width * 0.1 : Math.max(free + 40, width * 0.48);
+    // On a narrow hero the text fills it, so encounters keep low over the planet's limb, as the
+    // fleet's ships do.
+    const start = narrow ? width * 0.42 : Math.max(free + 40, width * 0.48);
     const x0 = start + size * 0.4;
     const x1 = Math.max(x0 + 40, width - 30 - size * 0.4);
-    const y = narrow ? height * (0.1 + 0.18 * random()) : height * (high ? 0.14 + 0.12 * random() : 0.22 + 0.3 * random());
+    const y = narrow ? height * (0.68 + 0.1 * random()) : height * (high ? 0.14 + 0.12 * random() : 0.22 + 0.3 * random());
     return { x0, x1, y, depth, perPx: perPixelAt(depth) };
   }
   const toWorld = (px, py, depth) => worldAt(px, py, depth, new THREE.Vector3());
@@ -687,7 +689,7 @@ export function createDirector({ kit, fleet = null, memory = null, random = kit.
         const plan = lane({ depth: -9.5, size });
         const velocity = new THREE.Vector3((random() < 0.5 ? -1 : 1) * 0.05, -0.015, 0);
         const ship = spawn({
-          key: `capital:${kind}`, side, length: size * plan.perPx, position: toWorld((plan.x0 + plan.x1) / 2, plan.y + 20, plan.depth), velocity,
+          key: `capital:${kind}`, side, length: size * plan.perPx, position: toWorld((plan.x0 + plan.x1) / 2, plan.y + (view.narrow ? 0 : 20), plan.depth), velocity,
           heading: new THREE.Vector3(velocity.x < 0 ? -1 : 1, -0.1, 0.35), up: new THREE.Vector3(0.35, 1, 0.2), textured: true, haze: 0.1, char: 0.15, hyper: false,
           label: `${side.name} ▸ ${label} · disabled`, contactClass: 'r3-contact--derelict', hp: 5,
           tumble: { axis: new THREE.Vector3(0.2, 0.1, 1).normalize(), rate: 0.035 },
