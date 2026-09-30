@@ -561,7 +561,42 @@ export const VISTA_GLSL = /* glsl */ `
   vec3 discNormal() {
     float tilt = uVistaParams.x;
     float roll = uVistaParams.y;
+    #if VISTA == 5
+      // A lone hole's spin axis precesses slowly by itself (a quasar's, r3-environment.js turns).
+      roll += 0.18 * sin(uTime * 0.03);
+      tilt += 0.04 * cos(uTime * 0.03);
+    #endif
     return normalize(vec3(sin(roll), sin(tilt) * cos(roll), cos(tilt)));
+  }
+
+  // The disc's gas at an angle round the hole and a radius (in its radii): streaks drawn out along
+  // the orbit, their lanes warped by a second noise, so the shear reads as turbulence.
+  float discGas(float angle, float radius, float seed) {
+    vec3 p = vec3(cos(angle) * 2.2, sin(angle) * 2.2, radius * 1.7 + seed);
+    vec3 warp = vec3(fbm3Lite(p * 1.3 + seed), fbm3Lite(p * 1.3 + seed + 5.1), fbm3Lite(p * 1.3 - seed));
+    return fbm3(vec3(p.xy, p.z * 3.2) + (warp - 0.5) * 1.6);
+  }
+
+  // Clumps of gas falling in: each spirals from the disc's rim to its inner edge over nine seconds,
+  // speeding up as it goes, flares there and is gone, and another starts. Returns the light at a
+  // point of the disc's plane.
+  float clumps(float angle, float radius) {
+    float light = 0.0;
+    for (int i = 0; i < 3; i++) {
+      float fi = float(i);
+      float life = uTime / 9.0 + fi / 3.0 + uBodyPx.w * 0.37;
+      float f = fract(life);
+      float cycle = floor(life);
+      float rc = mix(9.0, 3.1, pow(f, 1.6));
+      float ac = hash21(vec2(cycle, fi) + uBodyPx.w) * 6.2832 + 5.4 * pow(rc, -1.5) * f * 9.0 * uVistaParams.z;
+      float da = mod(angle - ac + 3.1416, 6.2832) - 3.1416;
+      float along = da * radius;
+      float dr = radius - rc;
+      float spot = exp(-(dr * dr) / 0.06 - (along * along) / 0.9);
+      float flare = 1.0 + 5.0 * smoothstep(0.86, 0.97, f);
+      light += spot * flare * (1.0 - smoothstep(0.97, 1.0, f)) * smoothstep(0.0, 0.08, f);
+    }
+    return light;
   }
 
   // A black hole, or a quasar: each ray is traced back from the eye and bent round the hole as
@@ -621,20 +656,34 @@ export const VISTA_GLSL = /* glsl */ `
         float radius = length(flatPos);
         if (radius > inner && radius < outer && alpha < 0.99) {
           float angle = atan(dot(flatPos, e2), dot(flatPos, e1));
+          // The gas's speed, as a fraction of light's, and its Doppler factor toward the eye: the side
+          // coming toward it brighter and bluer, the side going away dimmer and redder.
           float speed = sqrt(0.5 / radius);
           vec3 orbit = cross(normal, flatPos) / radius * uVistaParams.z;
           vec3 heading = vel * inversesqrt(max(dot(vel, vel), 1e-12));
           float doppler = 1.0 / max(0.2, 1.0 - speed * dot(orbit, -heading));
           float beaming = pow(doppler, 3.0);
+          float shift = clamp(log2(doppler) * 1.6, -1.0, 1.0);
+          vec3 tint = shift > 0.0 ? mix(vec3(1.0), vec3(0.72, 0.9, 1.45), shift) : mix(vec3(1.0), vec3(1.3, 0.72, 0.45), -shift);
           float heat = pow(inner / radius, 1.6);
-          // The disc's texture turns with it, read round a circle so it has no seam where the
-          // angle wraps.
-          float turned = angle + uTime * speed * 0.6 * uVistaParams.z + uBodyPx.w;
-          float swirl = fbm3(vec3(cos(turned) * 3.0, sin(turned) * 3.0, radius * 1.6));
+          // Keplerian: the inner edge round in about six seconds, the rim in forty. The gas is
+          // carried round by two copies of its pattern, each for eight seconds before it fades and
+          // starts again, so the shear winds it into streaks but never winds it up for good.
+          float omega = 5.4 * pow(radius, -1.5) * uVistaParams.z;
+          float phase = fract(uTime / 8.0);
+          float phaseB = fract(uTime / 8.0 + 0.5);
+          float weight = 1.0 - abs(2.0 * phase - 1.0);
+          float gasA = discGas(angle - omega * phase * 8.0, radius, uBodyPx.w + floor(uTime / 8.0) * 7.3);
+          float gasB = discGas(angle - omega * phaseB * 8.0, radius, uBodyPx.w + floor(uTime / 8.0 + 0.5) * 7.3 + 3.7);
+          float swirl = mix(gasB, gasA, weight);
           float bands = 0.6 + 0.4 * sin(radius * 6.0 + swirl * 7.0);
-          float density = smoothstep(inner, inner + 0.5, radius) * (1.0 - smoothstep(outer * 0.6, outer, radius)) * (0.25 + 0.75 * bands) * (0.5 + 0.7 * swirl);
-          vec3 hot = mix(uColourA, vec3(1.0, 0.95, 1.1) * 1.6, heat * (0.6 + 0.4 * uVistaParams.w));
-          vec3 light = hot * heat * beaming * (0.7 + 0.7 * uVistaParams.w);
+          float density = smoothstep(inner, inner + 0.5, radius) * (1.0 - smoothstep(outer * 0.6, outer, radius)) * (0.2 + 0.8 * bands) * smoothstep(0.2, 0.75, swirl) * 1.6;
+          float clump = clumps(angle, radius);
+          density = max(density, min(clump, 1.0));
+          // Hot at the inner edge, cooling outward to a dull red.
+          vec3 base = mix(vec3(1.0, 0.32, 0.1), uColourA, smoothstep(0.08, 0.5, heat));
+          vec3 hot = mix(base, vec3(1.0, 0.95, 1.1) * 1.6, heat * (0.6 + 0.4 * uVistaParams.w));
+          vec3 light = hot * tint * (heat + clump * 0.8) * beaming * (0.7 + 0.7 * uVistaParams.w);
           float a = clamp(density * 0.8, 0.0, 1.0);
           disc += (1.0 - alpha) * light * a;
           alpha += (1.0 - alpha) * a;
@@ -684,10 +733,12 @@ export const VISTA_GLSL = /* glsl */ `
     float along = abs(reach);
     float width = 0.25 + along * 0.045;
     float beam = exp(-pow(gap / width, 2.0)) * smoothstep(1.5, 4.0, along) * exp(-along * 0.018);
-    float knots = 0.55 + 0.45 * sin(along * 0.9 - uTime * 3.0 * sign(reach)) * noise2(vec2(along * 0.3, uTime * 0.5));
+    float knots = 0.55 + 0.45 * sin(along * 0.9 - uTime * 3.0) * noise2(vec2(along * 0.3, uTime * 0.5));
+    // Pulses running out along each beam, a few a second, fading as they go.
+    float pulse = pow(0.5 + 0.5 * sin(along * 0.32 - uTime * 4.0 + hash21(vec2(sign(reach), 1.0)) * 6.0), 8.0) * exp(-along * 0.02);
     float nearSide = sign(reach) * dot(normal, -d) > 0.0 ? 1.0 : 0.55;
     vec3 colour = mix(vec3(0.55, 0.7, 1.4), vec3(0.8, 0.5, 1.2), smoothstep(10.0, 60.0, along));
-    return colour * beam * (0.6 + knots) * nearSide * 1.3;
+    return colour * beam * (0.6 + knots + pulse * 1.8) * nearSide * 1.3;
   }
   #endif
 

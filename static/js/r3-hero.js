@@ -709,6 +709,8 @@ const SKY_FRAGMENT = /* glsl */ `
       if (lensed) col = bent;
       #if VISTA == 6
         col += jets(o, d, nearest);
+      #else
+        col += jets(o, d, nearest) * 0.09; // a lone hole's, faint
       #endif
     #endif
 
@@ -1684,7 +1686,7 @@ function start(hero, art) {
   if (new URLSearchParams(location.search).has('r3test')) {
     hero.r3Test = {
       THREE, scene, camera, sky: skyUniforms, focus: focusNow, skyTurn, cameraTurn, lens, vista: () => vista, region: () => freeRegion,
-      toWorld: (point) => rigToWorld(point.clone()), requestFrame: () => requestFrame(),
+      toWorld: (point) => rigToWorld(point.clone()), time, requestFrame: () => requestFrame(),
     };
   }
   const skyEye = new THREE.Vector3();
@@ -1964,6 +1966,7 @@ function start(hero, art) {
         placed.dirA = skyToWorld(lift.a, new THREE.Vector3()).normalize();
         placed.dirB = skyToWorld(lift.b, new THREE.Vector3()).normalize();
       }
+      placed.turn = cameraTurn; // the jet's axis turned into the view
       environment.place(placed); // [r3:environment]
     }
 

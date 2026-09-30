@@ -18,6 +18,7 @@ const FLARE_LENGTH = 1.3;
 const SHIELDS_DOWN = 5.5;
 
 export function createEnvironment({ sky, composite, sunDir, sunColor, reduceMotion = false }) {
+  const jetAxis = new THREE.Vector3(); // [r3:orbit]
   const forced = new URLSearchParams(location.search).get('env');
   // The ships' own sun: where it is and what colour, recomputed each frame from the sky's.
   const shipSun = { value: new THREE.Vector3(0.3, 0.6, -0.7).normalize() };
@@ -212,8 +213,14 @@ export function createEnvironment({ sky, composite, sunDir, sunColor, reduceMoti
         sky.uVistaParams.value.y = placed.params[1] + quasar.roll;
         const tilt = placed.params[0];
         const roll = sky.uVistaParams.value.y;
-        const ax = Math.sin(roll);
-        const ay = Math.sin(tilt) * Math.cos(roll);
+        let ax = Math.sin(roll);
+        let ay = Math.sin(tilt) * Math.cos(roll);
+        // [r3:orbit] The axis as it shows from where the view has turned, when the hero says.
+        if (placed.turn) {
+          jetAxis.set(ax, ay, Math.cos(tilt)).normalize().applyQuaternion(placed.turn);
+          ax = jetAxis.x;
+          ay = jetAxis.y;
+        }
         const axisLength = Math.hypot(ax, ay) || 1;
         const radius = placed.a[2] / kit.view.ratio;
         css(placed.a, holePx);
