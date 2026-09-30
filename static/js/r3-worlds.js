@@ -73,6 +73,8 @@ export const WORLDS = [
   { name: 'Nal Hutta', note: 'Hutt Space · swamp', lowland: '#3a3a1a', land: '#5a5a2a', highland: '#7a7040', cloud: '#a8a078', air: '#d0c07a', city: '#ffd04a', sea: 0.45, clouds: 0.6, cities: 0.5, scatter: [0.8, 1.1], dust: [1.8, 2.6], thickness: [1.0, 1.2] },
   { name: 'Rodia', note: 'Tyrius system · jungle', lowland: '#1d4a3a', land: '#3a7a3e', highland: '#6a9a5a', cloud: '#eef6ee', air: '#8ae0b0', city: '#ffe08a', sea: 0.5, clouds: 0.55, cities: 0.4, scatter: [1.0, 1.4], dust: [1.0, 1.4], thickness: [1.0, 1.2] },
   { name: 'Mimban', note: 'Mid Rim · mud trenches', lowland: '#3a2e22', land: '#5a4a38', highland: '#7a6a54', cloud: '#9a9084', air: '#b4a890', city: '#ffc070', sea: 0.35, clouds: 0.8, cities: 0.15, scatter: [0.8, 1.1], dust: [2.2, 3.0], thickness: [1.1, 1.4] },
+  { name: 'Kuat', note: 'Core Worlds · shipbuilders', lowland: '#24506e', land: '#6f7d62', highland: '#a8a394', cloud: '#f2f4f6', air: '#9cc8f0', city: '#ffd27a', sea: 0.42, clouds: 0.35, cities: 0.7, rings: 0, scatter: [0.9, 1.1], dust: [1.0, 1.4], thickness: [0.9, 1.1] },
+  { name: 'Fondor', note: 'Colonies · shipyards', lowland: '#3a3f46', land: '#7a7d80', highland: '#a4a6a8', cloud: '#d0d4d8', air: '#a0b8d8', city: '#ffc870', sea: 0.28, clouds: 0.3, cities: 0.85, scatter: [0.7, 1.0], dust: [1.4, 2.0], thickness: [0.9, 1.1] },
   { name: "Lah'mu", note: 'Outer Rim · black sand', lowland: '#1f5f6a', land: '#1c1c1e', highland: '#4a5a3a', cloud: '#f2f4f2', air: '#8ad0e0', city: '#ffd48a', sea: 0.55, clouds: 0.4, cities: 0.02, scale: 1.2, scatter: [0.9, 1.2], dust: [0.7, 1.0], thickness: [0.9, 1.1] },
 ];
 

@@ -175,6 +175,25 @@
   white-space: nowrap
   text-shadow: 0 0 6px rgb(0 0 0 / 90%)
 
+// A solar system's world under the pointer, named for the jump a click will make.
+.r3-waypoint
+  position: absolute
+  top: 0
+  left: 0
+  color: color-mix(in oklab, var(--dw-accent) 85%, white)
+  font-family: var(--dw-font-mono)
+  font-size: .66rem
+  letter-spacing: .14em
+  text-transform: uppercase
+  white-space: nowrap
+  text-shadow: 0 0 6px rgb(0 0 0 / 90%)
+  opacity: 0
+  transition: opacity .2s ease
+  pointer-events: none
+
+  &.is-shown
+    opacity: .9
+
 .r3-sky
   opacity: 0
   transition: opacity .9s ease

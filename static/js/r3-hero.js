@@ -27,7 +27,8 @@
 // [data-dw-hero-art] behind the text, which the canvas fills.
 
 import * as THREE from './vendor/three.module.min.js';
-import { pickWorld } from './r3-worlds.js';
+import { pickWorld, WORLDS } from './r3-worlds.js';
+import { pickVista, placeVista, VISTA_GLSL } from './r3-vistas.js';
 import { createFleet } from './r3-ships.js';
 import { pickScenario } from './r3-shipyard.js';
 
@@ -339,6 +340,8 @@ const SKY_FRAGMENT = /* glsl */ `
          + starLayer(css + uDrift * 30.0 + uScroll * 3.4, 173.0, 3.0, 1.0);
   }
 
+  ${VISTA_GLSL}
+
   void main() {
     vec2 px = gl_FragCoord.xy;
     vec2 css = px / uRatio;
@@ -473,7 +476,13 @@ const SKY_FRAGMENT = /* glsl */ `
           surface += vec3(1.0, 0.24, 0.03) * molten * (1.5 + 0.5 * sin(uTime * 1.3 + rift * 20.0));
         }
 
-        col = mix(col, surface, onPlanet);
+        float solid = 1.0;
+        if (abs(uVista - 8.0) < 0.5) {
+          vec4 station = deathStar(n, t, sun, footprint, uVistaParams.x > 0.5);
+          surface = station.rgb;
+          solid = station.a;
+        }
+        col = mix(col, surface, onPlanet * solid);
       }
 
       // The air over it all, the ground and the stars behind the limb alike. Then the site's cyan
@@ -482,7 +491,7 @@ const SKY_FRAGMENT = /* glsl */ `
       vec3 through;
       scatter(q, r, sun, gathered, through);
       col = col * through + gathered;
-      float line = exp(-abs(r - 1.0) * radius / (1.1 * uRatio));
+      float line = exp(-abs(r - 1.0) * radius / (1.1 * uRatio)) * (abs(uVista - 8.0) < 0.5 ? 0.0 : 1.0);
       col += uAccent * line * (0.2 + 0.9 * airLit + 0.6 * mie);
 
       // Aurora over a cold world's night side: curtains along the limb, green at their feet and
@@ -517,6 +526,26 @@ const SKY_FRAGMENT = /* glsl */ `
         float shadow = toward < 0.0 ? 1.0 - smoothstep(0.96, 1.04, length(rp - sun * toward)) : 0.0;
         vec3 ringLight = uRingColor * uSunColor * (0.2 + 0.8 * (1.0 - shadow)) * (0.55 + 0.6 * pow(max(-sun.z, 0.0), 2.0));
         col = mix(col, ringLight, density * 0.42 * (1.0 - hidden));
+      }
+    }
+
+    // The other backdrops.
+    if (uVista > 0.5 && uVista < 6.5) {
+      if (uVista < 1.5) {
+        col = solarSystem(px, col);
+      } else if (uVista < 2.5) {
+        col = binary(px, col);
+      } else if (uVista < 3.5) {
+        col += starHalo(px, uBodyA, uColourA, uVistaParams.x);
+        vec4 face = starFace(px, uBodyA, uColourA, uVistaParams.x);
+        col = mix(col, face.rgb, face.a);
+      } else if (uVista < 4.5) {
+        col = dwarf(px, col);
+      } else {
+        bool lensed;
+        vec3 bent = blackHole(px, col, lensed);
+        if (lensed) col = bent;
+        if (uVista > 5.5) col += jets(px);
       }
     }
 
@@ -888,6 +917,12 @@ function start(hero, art) {
   // A jump to hyperspace swaps the world for another (applyWorld, below), updating everything
   // that depends on it in place.
   let world = pickWorld();
+  // What lies behind: a planet, most visits, or one of the other backdrops (r3-vistas.js). A
+  // shipyard orbits its own world.
+  let vista = pickVista(world.random);
+  if (vista.world) world = pickWorld({ name: vista.world });
+  const planetLike = () => vista.kind === 'planet' || vista.kind === 'shipyard' || vista.kind === 'deathStar';
+  let systemWorlds = [];
   const worldColor = (hex) => new THREE.Color(hex).convertSRGBToLinear();
   const air = new THREE.Color();
   // Which world it is, read out small in the corner like a survey scanner's. A click on it jumps
@@ -899,7 +934,9 @@ function start(hero, art) {
   (art || hero).append(survey);
   function showSurvey() {
     survey.replaceChildren();
-    for (const [part, text] of [['tag', 'Survey'], ['name', world.name], ['note', world.note], ['jump', 'Jump ⟫']]) {
+    const name = vista.kind === 'planet' ? world.name : vista.name;
+    const note = vista.kind === 'planet' ? world.note : vista.kind === 'shipyard' ? `${world.name} · ${vista.note.split(' · ').pop()}` : vista.note;
+    for (const [part, text] of [['tag', 'Survey'], ['name', name], ['note', note], ['jump', 'Jump ⟫']]) {
       const span = document.createElement('span');
       span.className = `r3-survey__${part}`;
       span.textContent = text;
@@ -966,6 +1003,18 @@ function start(hero, art) {
     uRingColor: { value: new THREE.Color() },
     uRingSeed: { value: 0 },
     uHyper: { value: new THREE.Vector3(0, 1, 0) },
+    uVista: { value: 0 },
+    uBodyA: { value: new THREE.Vector4() },
+    uBodyB: { value: new THREE.Vector4() },
+    uVistaParams: { value: new THREE.Vector4() },
+    uColourA: { value: new THREE.Vector3(1, 1, 1) },
+    uColourB: { value: new THREE.Vector3(1, 1, 1) },
+    uWorlds: { value: Array.from({ length: 8 }, () => new THREE.Vector4()) },
+    uWorldTint: { value: Array.from({ length: 8 }, () => new THREE.Color()) },
+    uWorldTintB: { value: Array.from({ length: 8 }, () => new THREE.Color()) },
+    uOrbits: { value: Array.from({ length: 8 }, () => new THREE.Vector4(1, 1, 0, 0)) },
+    uWorldCount: { value: 0 },
+    uSkySize: { value: new THREE.Vector2(1, 1) },
     uHyperAt: { value: new THREE.Vector2() },
     uMoonA: { value: new THREE.Vector4(0, 0, 0, 0) },
     uMoonB: { value: new THREE.Vector4(0, 0, 0, 0) },
@@ -1066,6 +1115,12 @@ function start(hero, art) {
   const spinMatrix = new THREE.Matrix4();
   const planet = { x: 0, y: 0, radius: 1 };
   let sunAngle = 0;
+  let freeRegion = [0, 0, 1, 1];
+  const tints = new Map();
+  const tintOf = (hex) => {
+    if (!tints.has(hex)) tints.set(hex, worldColor(hex));
+    return tints.get(hex);
+  };
   const anchor = new THREE.Vector3();
   let jewelScale = 1;
 
@@ -1140,6 +1195,14 @@ function start(hero, art) {
       }
       planet.y = -planet.radius + Math.max(crown, 40);
     }
+    // The free sky, where a backdrop other than a planet stands: css pixels, y down.
+    freeRegion = [narrow ? width * 0.42 : textRight + 50, 18, width - 18, height - 18];
+    if (!planetLike()) {
+      planet.x = -1e5;
+      planet.y = -1e5;
+      planet.radius = 1;
+    }
+    skyUniforms.uSkySize.value.set(width * ratio, height * ratio);
     skyUniforms.uPlanet.value.set(planet.x * ratio, planet.y * ratio, planet.radius * ratio);
     // The sun rises at a point round the limb picked for this visit (r3-worlds.js): anywhere the
     // limb is in view, clear of the text and the hero's edges.
@@ -1157,7 +1220,7 @@ function start(hero, art) {
     const skyLeft = narrow ? width * 0.55 : Math.max(textRight + 60, width * 0.5);
     [skyUniforms.uMoonA.value, skyUniforms.uMoonB.value].forEach((moonValue, i) => {
       const [a, b, c] = world.moonSeeds.slice(i * 3, i * 3 + 3);
-      if (i >= Math.min(2, world.moonCount)) {
+      if (i >= Math.min(2, world.moonCount) || vista.kind !== 'planet') {
         moonValue.set(0, 0, 0, 0);
         return;
       }
@@ -1212,10 +1275,17 @@ function start(hero, art) {
   hero.addEventListener('pointerdown', (event) => {
     if (event.target.closest('a, button, input, summary, [role="button"]')) return;
     const bounds = hero.getBoundingClientRect();
-    // A ship under the pointer is shot down, before the star or the planet take the click.
+    // A ship under the pointer is shot down, before the star or the planet take the click, and a
+    // world of a solar system is jumped to.
     if (fleet.shoot(event.clientX - bounds.left, event.clientY - bounds.top)) {
       event.r3Taken = true;
       requestFrame();
+      return;
+    }
+    const body = systemWorldAt({ x: event.clientX - bounds.left, y: event.clientY - bounds.top });
+    if (body) {
+      event.r3Taken = true;
+      beginJump(body.world.name);
       return;
     }
     const dx = event.clientX - bounds.left - jewelPx.x;
@@ -1243,6 +1313,15 @@ function start(hero, art) {
     const dx = point.x - jewelPx.x;
     const dy = point.y - jewelPx.y;
     return dx * dx + dy * dy <= (jewelPx.radius * 1.6) ** 2;
+  }
+  // A world of a solar system under the pointer: its name shows beside it, and a click jumps there.
+  const waypoint = document.createElement('span');
+  waypoint.className = 'r3-waypoint';
+  waypoint.setAttribute('aria-hidden', 'true');
+  (art || hero).append(waypoint);
+  function systemWorldAt(point) {
+    if (jump.active) return null;
+    return systemWorlds.find((body) => (body.x - point.x) ** 2 + (body.y - point.y) ** 2 < (body.radius + 8) ** 2) || null;
   }
   function overPlanet(point) {
     const dx = point.x - (planet.x - drift.value.x * 26);
@@ -1276,7 +1355,13 @@ function start(hero, art) {
     if (!planetDrag.active) {
       const point = heroPoint(event);
       const onLink = event.target.closest(interactive);
-      hero.style.cursor = onLink ? '' : fleet.aimed(point.x, point.y) ? 'crosshair' : overJewel(point) ? 'pointer' : overPlanet(point) ? 'grab' : '';
+      const body = onLink ? null : systemWorldAt(point);
+      hero.style.cursor = onLink ? '' : fleet.aimed(point.x, point.y) ? 'crosshair' : body || overJewel(point) ? 'pointer' : overPlanet(point) ? 'grab' : '';
+      waypoint.classList.toggle('is-shown', !!body);
+      if (body) {
+        waypoint.textContent = `${body.world.name} ⟫`;
+        waypoint.style.transform = `translate(${Math.round(body.x + body.radius + 8)}px, ${Math.round(body.y - 8)}px)`;
+      }
       return;
     }
     if (event.pointerId !== planetDrag.id) return;
@@ -1403,6 +1488,31 @@ function start(hero, art) {
       const lift2 = planet.radius * (1.0 + 0.002 + 0.012 * rise);
       compositeUniforms.uSun2Px.value.set((planet.x - drift.value.x * 26 + second.x * lift2) * ratio, (planet.y - drift.value.y * 26 + second.y * lift2) * ratio);
       compositeUniforms.uSun2Show.value = compositeUniforms.uSunShow.value * 0.8;
+    } else {
+      compositeUniforms.uSun2Show.value = 0;
+    }
+    if (!planetLike()) {
+      // Another backdrop: its bodies placed for this moment, and its light lighting the scene.
+      const placed = placeVista(vista, { width, height, ratio, region: freeRegion, time: t, worlds: WORLDS });
+      const sky = skyUniforms;
+      sky.uBodyA.value.set(...placed.a);
+      sky.uBodyB.value.set(...placed.b);
+      sky.uVistaParams.value.set(...placed.params);
+      sky.uColourA.value.set(...placed.colourA);
+      sky.uColourB.value.set(...placed.colourB);
+      sky.uWorldCount.value = placed.planets.length;
+      placed.planets.forEach((body, i) => {
+        sky.uWorlds.value[i].set(body.x * ratio, (height - body.y) * ratio, body.radius * ratio, body.behind ? 1 : 0);
+        sky.uOrbits.value[i].set(body.orbit[0], body.orbit[1], 0, 0);
+        sky.uWorldTint.value[i].copy(tintOf(body.world.land));
+        sky.uWorldTintB.value[i].copy(tintOf(body.world.bands ? body.world.highland : body.world.lowland));
+      });
+      systemWorlds = placed.planets;
+      const [lightX, lightY] = placed.light;
+      sunDir.value.set((lightX - width * 0.62) / height, -(lightY - height * 0.45) / height, -0.75).normalize();
+      compositeUniforms.uSunPx.value.set(lightX * ratio, (height - lightY) * ratio);
+      compositeUniforms.uSunShow.value = { dwarf: 0.45, binary: 0.35, system: 0.5 }[vista.kind] || 0;
+      compositeUniforms.uPlanetPx.value.set(-1e5, -1e5, 1);
     }
 
     // The star drifts round the hero and bounces off its edges like an old screensaver, the point
@@ -1589,6 +1699,23 @@ function start(hero, art) {
     sky.uBetaR.value.copy(atmosphere.uBetaR.value);
     sky.uBetaM.value = atmosphere.uBetaM.value;
     sky.uAirShape.value.copy(atmosphere.uAirShape.value);
+    // The backdrop. The Death Star has no air, no sea, no rings and no aurora; the others take
+    // their light from their own star.
+    sky.uVista.value = vista.index;
+    sky.uVistaParams.value.set(vista.second ? 1 : 0, 0, 0, 0);
+    sunColor.setRGB(1.0, 0.93, 0.82).multiplyScalar(1.6);
+    if (vista.kind === 'deathStar') {
+      sky.uBetaR.value.set(0, 0, 0);
+      sky.uBetaM.value = 0;
+      sky.uAirShape.value.z = 1.0;
+      sky.uWorldC.value.set(0, 0, 0, 0);
+    } else if (!planetLike()) {
+      const colour = vista.colour || [1.2, 1.0, 0.8];
+      const strongest = Math.max(...colour);
+      sunColor.setRGB(colour[0] / strongest, colour[1] / strongest, colour[2] / strongest).multiplyScalar(1.5);
+      air.copy(accent).multiplyScalar(0.55).add(new THREE.Color(...colour).multiplyScalar(0.25));
+    }
+    systemWorlds = [];
     worldAxis.set(world.tilt[0], world.tilt[1], 1).normalize();
     alignAxis.makeRotationFromQuaternion(new THREE.Quaternion().setFromUnitVectors(worldAxis, new THREE.Vector3(0, 1, 0)));
     spinAxisView.copy(worldAxis);
@@ -1604,8 +1731,9 @@ function start(hero, art) {
   // and under a flash the view drops out over another world, with another fleet. Under reduced
   // motion a click swaps the world at once and nothing jumps on its own.
   const jump = { active: false, age: 0, swapped: false, next: reduceMotion ? Infinity : 170 + Math.random() * 90 };
-  function beginJump() {
+  function beginJump(target = null) {
     if (jump.active) return;
+    jump.target = typeof target === 'string' ? target : null;
     if (reduceMotion) {
       swapWorld();
       requestFrame();
@@ -1620,7 +1748,13 @@ function start(hero, art) {
   function swapWorld() {
     jump.swapped = true;
     fleet.dispose();
-    applyWorld(pickWorld({ fresh: true, exclude: world.name }));
+    // A world clicked in a solar system is where the jump goes; otherwise anywhere, and any backdrop.
+    const target = jump.target;
+    jump.target = null;
+    let next = pickWorld({ fresh: true, exclude: world.name, name: target });
+    vista = target ? { kind: 'planet', index: 0 } : pickVista(next.random, { fresh: true, exclude: vista.kind });
+    if (vista.world) next = pickWorld({ fresh: true, name: vista.world });
+    applyWorld(next);
     fleet = createFleet({ scene, camera, time, sunDir, sunColor, air, reduceMotion, overlay: art || hero, anisotropy: renderer.capabilities.getMaxAnisotropy(), random: world.random, scenario: pickScenario(world.random, { fresh: true }) });
     starPlaced = true;
     layout();
@@ -1653,7 +1787,7 @@ function start(hero, art) {
     }
     camera.position.x += (Math.random() - 0.5) * hyper.x * 0.05;
   }
-  survey.addEventListener('click', beginJump);
+  survey.addEventListener('click', () => beginJump());
   hero.addEventListener('dblclick', (event) => {
     if (event.target.closest('a, button, input, summary, [role="button"], .r3-survey')) return;
     const bounds = hero.getBoundingClientRect();
