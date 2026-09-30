@@ -613,20 +613,13 @@
     display: none
 
 // [r3:environment] What the weather is doing to a contact: shields down in a flare, jumping clear
-// of a quasar's jet. It sits under the label, in warning amber, and fades in and out.
-.r3-contact__weather
-  position: absolute
-  top: 100%
-  left: 0
-  margin-top: 3.3rem
-  color: var(--dw-warn)
-// [r3:pilot] A capital ship acknowledging the visitor's jewel as it passes: its brackets flare twice
-// and a line of IFF reads under its class.
+// of a quasar's jet, in warning amber. [r3:qa] The lines under a contact each keep a row of their own:
+// the label, then gunnery's status (+1.25rem), sensors (+2.2rem), the weather, then the hail.
+.r3-contact__weather,
 .r3-contact__hail
   position: absolute
   top: 100%
   left: 0
-  margin-top: 1.3rem
   font-family: var(--dw-font-mono)
   font-size: .56rem
   letter-spacing: .14em
@@ -634,13 +627,20 @@
   white-space: nowrap
   text-shadow: 0 0 6px rgb(0 0 0 / 90%)
   opacity: 0
+
+.r3-contact__weather
+  margin-top: 3.15rem
+  color: var(--dw-warn)
   transition: opacity .3s ease
 
   &.is-shown
     opacity: 1
+
+// [r3:pilot] A capital ship acknowledging the visitor's jewel as it passes: its brackets flare twice
+// and a line of IFF reads under its class.
+.r3-contact__hail
+  margin-top: 4.1rem
   color: color-mix(in oklab, var(--dw-accent) 70%, white)
-  text-shadow: 0 0 6px rgb(0 0 0 / 90%)
-  opacity: 0
   transition: opacity .5s ease
 
 .r3-contact.is-hailing

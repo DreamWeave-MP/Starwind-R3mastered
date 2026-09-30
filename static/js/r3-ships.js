@@ -639,6 +639,8 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
   const picked = forcedScenario || pickScenario(random);
   const seeded = !!(memory && memory.seeded && !forcedScenario);
   const steerable = !!forcedScenario || seeded || !new URLSearchParams(location.search).has('fleet');
+  // [r3:qa] Test only: ?fleet_now=1 brings the fleet in at once, for screenshots and loop tests.
+  const fleetNow = new URLSearchParams(location.search).has('fleet_now');
   const scenario = steerable ? steerScenario(picked, memory, random, ERAS, { force: seeded }) : picked;
   const sides = scenario.sides.map((key) => ({ key, ...FACTIONS[key], stance: memory ? memory.stance(key) : null }));
 
@@ -884,6 +886,8 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
   // count particles of a kind from origin, their speed, size and life drawn from the given ranges,
   // spreading about a direction if one is given, in every direction if not.
   function emit(origin, count, kind, [speedLow, speedHigh], [sizeLow, sizeHigh], [lifeLow, lifeHigh], toward = null, spread = 1) {
+    // [r3:qa] A phone's hero is small and its fill rate is short: half the sparks and fire read the same.
+    if (view.narrow) count = Math.ceil(count * 0.5);
     const start = particleGeometry.getAttribute('position');
     const velocity = particleGeometry.getAttribute('aVelocity');
     const life = particleGeometry.getAttribute('aLife');
@@ -970,6 +974,10 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     return { element, label, status, pips };
   }
   // Fits a contact to points of an object, as the camera sees them.
+  // [r3:qa] Adds or removes a class only if that changes it; classList always writes the attribute.
+  function mark(element, name, on) {
+    if (element.classList.contains(name) !== on) element.classList.toggle(name, on);
+  }
   function frame(contact, object, points, age) {
     object.updateMatrixWorld(true);
     camera.updateMatrixWorld();
@@ -986,13 +994,18 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     }
     const lock = Math.min(1, age / 0.6);
     const pad = 8 + 70 * Math.pow(1 - lock, 2);
-    contact.element.style.transform = `translate(${(left - pad).toFixed(1)}px, ${(top - pad).toFixed(1)}px)`;
-    contact.element.style.width = `${(right - left + pad * 2).toFixed(1)}px`;
-    contact.element.style.height = `${(bottom - top + pad * 2).toFixed(1)}px`;
-    contact.element.classList.add('is-locked');
+    // [r3:qa] Written only when they change: a style or class write, even of the same value, is a
+    // mutation the page has to process, and this runs for every contact every frame.
+    const transform = `translate(${(left - pad).toFixed(1)}px, ${(top - pad).toFixed(1)}px)`;
+    const width = `${(right - left + pad * 2).toFixed(1)}px`;
+    const height = `${(bottom - top + pad * 2).toFixed(1)}px`;
+    if (contact.transform !== transform) contact.element.style.transform = contact.transform = transform;
+    if (contact.width !== width) contact.element.style.width = contact.width = width;
+    if (contact.height !== height) contact.element.style.height = contact.height = height;
+    mark(contact.element, 'is-locked', true);
     // [r3:orbit] Hidden entirely behind the backdrop's planet or star (r3-hero.js tells), its
     // brackets dim.
-    contact.element.classList.toggle('is-occluded', !!(kit.occluded && kit.occluded(object, points)));
+    mark(contact.element, 'is-occluded', !!(kit.occluded && kit.occluded(object, points)));
     // [r3:stage] The readout under the brackets stays on the stage: where it would run off the
     // right edge it moves left of them, and never left of the stage. Its width is estimated from
     // the label's length (about 7px a character), so nothing is measured each frame.
@@ -1013,8 +1026,9 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     const visible = 2 * (10 - z) * tanHalf;
     return out.set(((px - view.width / 2) / view.height) * visible, ((view.height / 2 - py) / view.height) * visible, z);
   }
+  const projected = new THREE.Vector3(); // [r3:qa] scratch: screenOf runs for every bracket corner, every frame
   function screenOf(point, out) {
-    const p = point.clone().project(camera);
+    const p = projected.copy(point).project(camera);
     return out.set((p.x * 0.5 + 0.5) * view.width, (0.5 - p.y * 0.5) * view.height, p.z);
   }
   // World units per css pixel at a depth.
@@ -1025,7 +1039,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
   // phone, and on patrol, one at a time.
   function makeVisit(slot) {
     return {
-      slot, state: 'waiting', until: reduceMotion ? 0 : 2.5 + slot * 7, age: 0, ship: null,
+      slot, state: 'waiting', until: reduceMotion ? 0 : fleetNow ? 0.05 + slot * 0.4 : 2.5 + slot * 7, age: 0, ship: null,
       start: new THREE.Vector3(), velocity: new THREE.Vector3(), heading: new THREE.Vector3(), up: new THREE.Vector3(), position: new THREE.Vector3(),
       length: 1, cruise: 30, contact: makeContact(), rect: null, blasts: 0, shield: 1, hull: 0, nextVolley: 0, fleeing: false,
       // [r3:gunnery] Subsystem damage, 0 to 3 each, and the fire and secondaries it causes.
@@ -1105,7 +1119,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
 
   // The fighters' passes: a patrol of one side, at war a dogfight, one side chased by the other, and
   // while capital ships are in the sky, a pair launching from a hangar.
-  const pass = { active: false, age: 0, duration: 3.4, next: reduceMotion ? Infinity : 5 + random() * 4, points: [], flights: [] };
+  const pass = { active: false, age: 0, duration: 3.4, next: reduceMotion ? Infinity : fleetNow ? 0.3 : 5 + random() * 4, points: [], flights: [] };
   function pairOf(side) {
     const kind = side.fighters[Math.floor(random() * side.fighters.length)];
     return pools.get(`${side.key}:${kind}`);
@@ -1358,6 +1372,12 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     out.set(local[0] + (random() - 0.5) * 0.08, local[1] + (random() - 0.5) * 0.04, local[2] + (random() - 0.5) * 0.08);
     return out.multiplyScalar(1).applyMatrix4(visit.ship.group.matrixWorld);
   }
+  // [r3:memory] [r3:qa] Whose ship the viewer destroyed, and, at war, whom that helped.
+  function recordKill(side, capital) {
+    if (!memory || !side) return;
+    const enemy = scenario.war ? sides.find((entry) => entry !== side) : null;
+    memory.record('kill', { faction: side.key, capital, enemy: enemy ? enemy.key : null });
+  }
   function resetSystems(visit) {
     for (const key of SYSTEMS) {
       visit.systems[key] = 0;
@@ -1366,6 +1386,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     visit.shieldMax = visit.shield;
     visit.secondaries = 0;
     visit.statusUntil = 0;
+    visit.struckByViewer = false; // [r3:qa] whether a kill of this visit is the viewer's
     visit.contact.status.textContent = '';
     visit.contact.element.classList.remove('is-engaged', 'is-announcing');
   }
@@ -1420,7 +1441,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
   // Damage burns while the ship cruises: its engines trail fire, its hangar pops with secondaries,
   // and its brackets' readout fades after a hit.
   function burnDamage(visit, dt) {
-    if (clock > visit.statusUntil) visit.contact.element.classList.remove('is-announcing');
+    if (clock > visit.statusUntil) mark(visit.contact.element, 'is-announcing', false); // [r3:qa] runs every frame
     if (reduceMotion) return;
     const engines = visit.systems.engines;
     if (engines > 0 && clock >= visit.nextEmber) {
@@ -1544,7 +1565,9 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
         ship.group.visible = false;
         visit.contact.element.classList.remove('is-locked', 'is-lost');
         visit.state = 'waiting';
-        visit.until = clock + 3.5 + random() * 3;
+        visit.until = clock + (fleetNow ? 0.3 : 3.5 + random() * 3);
+        if (visit.struckByViewer) recordKill(ship.side, true); // [r3:qa] once, at destruction
+        visit.struckByViewer = false;
         for (const listener of listeners.destroyed) listener({ position: position.clone(), length: visit.length, quaternion: ship.group.quaternion.clone(), velocity: visit.velocity.clone(), side: ship.side, material: ship.material });
         visit.start.copy(position);
         return;
@@ -1559,7 +1582,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
       if (l >= 1) {
         visit.state = 'waiting';
         // [r3:memory] A furious navy comes straight back.
-        visit.until = clock + (ship.side.stance === 'furious' ? 3 + random() * 2 : 7 + random() * 9);
+        visit.until = clock + (fleetNow ? 0.5 : ship.side.stance === 'furious' ? 3 + random() * 2 : 7 + random() * 9);
         ship.group.visible = false;
       }
     }
@@ -1626,6 +1649,8 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
         shot.age = -i * 0.12;
       }
       incoming.push(clock + distanceTo(visit) / 26 + 0.1);
+      // [r3:qa] and splashes on the jewel's shield, from the ship's side.
+      if (struck) struck(aim.copy(player.point).sub(visit.position).normalize(), distanceTo(visit) / 26 + 0.1);
       visit.nextVolley = clock + 2.4 + random() * 1.6;
     }
     while (incoming.length && clock >= incoming[0]) {
@@ -1649,10 +1674,16 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     }
   }
 
+  // [r3:qa] Samples are recycled: a trail sheds its oldest into a spare list and takes new ones from it,
+  // so a pass of fighters allocates nothing per frame.
+  const spareSamples = [];
   function trailSample(fighter, index, point) {
     const trail = fighter.trails[index];
-    trail.samples.unshift({ point: point.clone(), at: clock });
-    while (trail.samples.length > 95 || (trail.samples.length && clock - trail.samples[trail.samples.length - 1].at > 0.6)) trail.samples.pop();
+    const sample = spareSamples.pop() || { point: new THREE.Vector3(), at: 0 };
+    sample.point.copy(point);
+    sample.at = clock;
+    trail.samples.unshift(sample);
+    while (trail.samples.length > 95 || (trail.samples.length && clock - trail.samples[trail.samples.length - 1].at > 0.6)) spareSamples.push(trail.samples.pop());
   }
 
   function drawTrail(trail, fade) {
@@ -1688,6 +1719,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
   }
 
   // [r3:memory] A fighter's shot at a point: the viewer's jewel, a little off.
+  let struck = null; // [r3:qa] set by the pilot: (direction toward the target, delay) => a splash on its shield
   function fireAt(fighter, point) {
     fighter.group.updateMatrixWorld(true);
     const cannons = fighter.design.cannons;
@@ -1698,7 +1730,10 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     aim.normalize();
     aim.x += (random() - 0.5) * 0.08;
     aim.y += (random() - 0.5) * 0.08;
-    bolt(start, aim.normalize(), { speed: 48, length: 0.5, life: 0.6, color: linear(fighter.side.laser), style: fighter.side.bolt || null });
+    aim.normalize();
+    bolt(start, aim, { speed: 48, length: 0.5, life: 0.6, color: linear(fighter.side.laser), style: fighter.side.bolt || null });
+    const reach = start.distanceTo(point);
+    if (struck && reach < 48 * 0.6) struck(aim, reach / 48); // [r3:qa] it lands inside the bolt's life
   }
 
   function updateBolts(dt) {
@@ -1857,6 +1892,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     capitals, fighters: allFighters, env, // [r3:environment]
     pass, zoneAt, // [r3:gunnery] for the sensors: the fighters' passes, and where a point lands on a hull
     escort: (hook) => { escort = hook; }, // [r3:pilot]
+    struck: (hook) => { struck = hook; }, // [r3:qa] the pilot's shield, for shots aimed at the jewel
   };
 
   return {
@@ -1873,10 +1909,10 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     shoot(x, y) {
       const target = targetAt(x, y);
       if (!target) return false;
-      // [r3:memory] Remembered: whose ship it was, and, at war, whom that helped.
-      const struck = target.fighter ? target.fighter.side : target.capital.ship.side;
-      const enemy = scenario.war ? sides.find((entry) => entry !== struck) : null;
-      if (memory) memory.record('kill', { faction: struck.key, capital: !target.fighter, enemy: enemy ? enemy.key : null });
+      // [r3:memory] Remembered: a fighter dies at the click, so its kill is recorded now; a capital
+      // only when it is destroyed (see explode), once, however many hits that took. [r3:qa]
+      if (target.fighter) recordKill(target.fighter.side, false);
+      else target.capital.struckByViewer = true;
       if (target.fighter) {
         const fighter = target.fighter;
         fighter.dead = true;
@@ -1887,6 +1923,8 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
           shake = Math.max(shake, 0.3);
         }
       } else if (reduceMotion) {
+        recordKill(target.capital.ship.side, true); // [r3:qa] no explosion under reduced motion
+        target.capital.struckByViewer = false;
         target.capital.ship.group.visible = false;
         target.capital.state = 'waiting';
         target.capital.until = clock + 5;

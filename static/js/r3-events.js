@@ -180,15 +180,20 @@ function randomAxis(random) {
   return out.normalize();
 }
 
+// [r3:qa] Scratch for orient, which runs for every steered actor every frame.
+const orientX = new THREE.Vector3();
+const orientY = new THREE.Vector3();
+const orientZ = new THREE.Vector3();
+const orientBasis = new THREE.Matrix4();
 function orient(object, forward, up) {
-  const z = forward.clone();
+  const z = orientZ.copy(forward);
   if (z.lengthSq() < 1e-8) return;
   z.normalize();
-  let y = up.clone().addScaledVector(z, -up.dot(z));
-  if (y.lengthSq() < 1e-6) y = new THREE.Vector3(0, 0, 1).addScaledVector(z, -z.z);
+  const y = orientY.copy(up).addScaledVector(z, -up.dot(z));
+  if (y.lengthSq() < 1e-6) y.set(0, 0, 1).addScaledVector(z, -z.z);
   y.normalize();
-  const x = new THREE.Vector3().crossVectors(y, z).normalize();
-  object.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(x, y, z));
+  const x = orientX.crossVectors(y, z).normalize();
+  object.quaternion.setFromRotationMatrix(orientBasis.makeBasis(x, y, z));
 }
 
 export function createDirector({ kit, fleet = null, memory = null, random = kit.random }) {
@@ -218,6 +223,8 @@ export function createDirector({ kit, fleet = null, memory = null, random = kit.
   let hazeDirty = false;
   const scratch = new THREE.Vector3();
   function puff(origin, count, kind, [speedLow, speedHigh], [sizeLow, sizeHigh], [lifeLow, lifeHigh], toward = null, spread = 1) {
+    // [r3:qa] Soft haze is overdraw; a phone gets half of it.
+    if (view.narrow && random() < 0.5) return;
     const start = hazeGeometry.getAttribute('position');
     const velocity = hazeGeometry.getAttribute('aVelocity');
     const life = hazeGeometry.getAttribute('aLife');
@@ -456,9 +463,10 @@ export function createDirector({ kit, fleet = null, memory = null, random = kit.
   const MAX_CHUNKS = 18;
   function wreckage({ position, length, quaternion, velocity, side }) {
     if (reduceMotion) return;
-    const count = 3 + Math.floor(random() * 6);
+    const count = view.narrow ? 2 + Math.floor(random() * 3) : 3 + Math.floor(random() * 6); // [r3:qa] fewer on a phone
+    const cap = view.narrow ? 8 : MAX_CHUNKS;
     for (let i = 0; i < count; i++) {
-      while (chunks.filter((chunk) => !chunk.gone).length >= MAX_CHUNKS) {
+      while (chunks.filter((chunk) => !chunk.gone).length >= cap) {
         const oldest = chunks.find((chunk) => !chunk.gone);
         remove(oldest);
       }

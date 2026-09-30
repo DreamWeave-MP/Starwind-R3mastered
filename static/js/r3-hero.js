@@ -1402,6 +1402,7 @@ function start(hero, art) {
   let ratio = 1;
   let quality = 1;
   let slowTime = 0;
+  let fastTime = 0; // [r3:qa] how long frames have been comfortably quick, to win back quality
   let narrow = false;
   const jewelPx = { x: 0, y: 0, radius: 1 };
   let starPlaced = false;
@@ -1646,6 +1647,13 @@ function start(hero, art) {
       event.r3Taken = true;
       return;
     }
+    // [r3:pilot] A press on the jewel is the pilot's, before anything behind it: a click calls the
+    // fleet, a drag flies it. [r3:qa] It came after the ships, so a fighter crossing under the
+    // jewel was shot instead.
+    if (pilot.press(event, { x: event.clientX - bounds.left, y: event.clientY - bounds.top })) {
+      event.r3Taken = true;
+      return;
+    }
     // A ship under the pointer is shot down, before the star or the planet take the click.
     if (fleet.shoot(event.clientX - bounds.left, event.clientY - bounds.top)) {
       event.r3Taken = true;
@@ -1657,8 +1665,6 @@ function start(hero, art) {
       requestFrame();
       return;
     }
-    // [r3:pilot] A press on the jewel is the pilot's: a click calls the fleet, a drag flies it.
-    if (pilot.press(event, { x: event.clientX - bounds.left, y: event.clientY - bounds.top })) event.r3Taken = true;
   }, { passive: true });
   // [r3:orbit] A click on the sky, not a press, begins it all again at the heat death or jumps to a
   // world of a solar system, so a drag that starts there turns the view instead (r3-camera.js
@@ -1736,7 +1742,8 @@ function start(hero, art) {
     }
     const onLink = event.target.closest(interactive) || event.target.closest('.r3-survey') || overText(point);
     const body = onLink ? null : systemWorldAt(point);
-    hero.style.cursor = onLink ? '' : fleet.aimed(point.x, point.y) || director.aimed(point.x, point.y) /* [r3:director] */ ? 'crosshair' : body || overJewel(point) ? 'pointer' : 'grab';
+    // [r3:qa] In the order a press is taken: the jewel first, then the ships behind it.
+    hero.style.cursor = onLink ? '' : overJewel(point) ? 'pointer' : fleet.aimed(point.x, point.y) || director.aimed(point.x, point.y) /* [r3:director] */ ? 'crosshair' : body ? 'pointer' : 'grab';
     waypoint.classList.toggle('is-shown', !!body);
     if (body) {
       waypoint.textContent = `${body.world.name} ⟫`;
@@ -1848,7 +1855,6 @@ function start(hero, art) {
       if (vista.kind === 'binary') hiders[count++].copy(lift.b);
     }
     if (!count || jump.active) return false;
-    object.updateMatrixWorld(true);
     for (const corner of points) {
       worldToRig(hiddenPoint.copy(corner).applyMatrix4(object.matrixWorld)).sub(focusNow).applyQuaternion(skyTurn);
       hiddenRay.subVectors(hiddenPoint, skyEye);
@@ -1917,6 +1923,15 @@ function start(hero, art) {
       if (slowTime > 1.5 && quality > 0.5) {
         quality = Math.max(0.5, quality - 0.2);
         slowTime = 0;
+        fastTime = -8; // [r3:qa] after stepping down, twice as long before stepping up again
+        layout();
+      }
+      // [r3:qa] One hitch, a shader compiling in a jump say, used to cost the visit its resolution for
+      // good. Eight seconds of quick frames now wins a step back.
+      fastTime = rawDt < 1 / 50 ? fastTime + rawDt : Math.min(fastTime, 0);
+      if (fastTime > 8 && quality < 1) {
+        quality = Math.min(1, quality + 0.1);
+        fastTime = 0;
         layout();
       }
     }
