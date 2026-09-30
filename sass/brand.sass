@@ -127,7 +127,8 @@
 
 // The survey readout's controls: only these take the pointer.
 .r3-survey__jump,
-.r3-survey__up
+.r3-survey__up,
+.r3-survey__sensors
   opacity: .55
   pointer-events: auto
   cursor: pointer
@@ -177,6 +178,112 @@
   text-transform: uppercase
   white-space: nowrap
   text-shadow: 0 0 6px rgb(0 0 0 / 90%)
+
+// [r3:gunnery] What a hit did, for a moment, under the class readout; and the four subsystems as
+// pips (engines, weapons, hangar, bridge), from nominal through damaged and offline to destroyed.
+.r3-contact__status,
+.r3-contact__systems,
+.r3-contact__sensor
+  position: absolute
+  left: 0
+  font-family: var(--dw-font-mono)
+  font-size: .56rem
+  letter-spacing: .12em
+  text-transform: uppercase
+  white-space: nowrap
+  text-shadow: 0 0 6px rgb(0 0 0 / 90%)
+  opacity: 0
+  transition: opacity .35s ease
+
+.r3-contact__status
+  top: calc(100% + 1.25rem)
+  color: color-mix(in oklab, #ffb24a 85%, white)
+
+.r3-contact__systems
+  bottom: 100%
+  display: flex
+  gap: 3px
+  margin-bottom: .3rem
+
+  i
+    width: 1.05em
+    height: 1.2em
+    border: 1px solid currentColor
+    font-style: normal
+    font-size: .5rem
+    line-height: 1.2em
+    text-align: center
+
+    &[data-level="1"]
+      color: #ffc65a
+    &[data-level="2"]
+      color: #ff7a4a
+      background: color-mix(in oklab, #ff7a4a 25%, transparent)
+    &[data-level="3"]
+      color: #ff4a4a
+      background: color-mix(in oklab, #ff4a4a 45%, transparent)
+      text-decoration: line-through
+
+.r3-contact__sensor
+  top: calc(100% + 2.2rem)
+
+.r3-contact.is-announcing .r3-contact__status,
+.r3-contact.is-engaged .r3-contact__systems
+  opacity: .95
+
+// [r3:gunnery] The tactical scope, while Shift is held or SENSORS is on: harder brackets with their
+// numbers, the ships' vectors on a canvas, and the system named in the corner.
+.r3-sensors
+  position: absolute
+  inset: 0
+  width: 100%
+  height: 100%
+  pointer-events: none
+
+.r3-sensors__readout
+  position: absolute
+  top: .9rem
+  right: 1.1rem
+  display: grid
+  justify-items: end
+  gap: .15rem
+  color: color-mix(in oklab, var(--dw-accent) 90%, white)
+  font-family: var(--dw-font-mono)
+  font-size: .6rem
+  letter-spacing: .14em
+  text-transform: uppercase
+  text-shadow: 0 0 6px rgb(0 0 0 / 90%)
+  opacity: 0
+  pointer-events: none
+
+.r3-sensors__title
+  font-weight: 700
+  font-size: .68rem
+
+.r3-sensors__note,
+.r3-sensors__sides
+  color: var(--dw-text-muted)
+
+.is-sensing
+  .r3-contact
+    opacity: 1
+    color: var(--dw-accent)
+
+    &.is-locked
+      opacity: 1
+
+  .r3-contact__systems,
+  .r3-contact__sensor
+    opacity: .95
+
+.r3-survey.is-sensing .r3-survey__sensors
+  color: var(--dw-accent)
+  opacity: 1
+
+@media (forced-colors: active)
+  .r3-sensors,
+  .r3-sensors__readout
+    display: none
 
 // A solar system's world under the pointer, named for the jump a click will make.
 .r3-waypoint
