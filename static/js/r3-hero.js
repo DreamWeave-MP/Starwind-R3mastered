@@ -348,7 +348,7 @@ const SKY_FRAGMENT = /* glsl */ `
     // At the heat death each star goes out at its own moment, flaring as it goes, the last red.
     float death = hash21(id + 23.7);
     float alive = smoothstep(uDying - 0.004, uDying + 0.004, death);
-    float going = uDying > 0.0 ? exp(-pow((death - uDying) * 160.0, 2.0)) : 0.0;
+    float going = uDying > 0.0 ? exp(-pow(abs(death - uDying) * 160.0, 2.0)) : 0.0;
     tint = mix(tint, vec3(1.0, 0.42, 0.28), smoothstep(0.35, 0.9, uDying));
     float bright = step(0.3, h) * spikes;
     float spike = bright * (exp(-abs(d.y) * 1.6) * exp(-abs(d.x) * 0.16) + exp(-abs(d.x) * 1.6) * exp(-abs(d.y) * 0.16));
@@ -689,14 +689,14 @@ const JEWEL_FRAGMENT = /* glsl */ `
   }
 
   void main() {
-    vec3 n = normalize(vNormal);
+    vec3 n = vNormal * inversesqrt(max(dot(vNormal, vNormal), 1e-8));
     vec3 v = uCamera - vWorld;
     float vl = length(v);
     v = vl > 1e-5 ? v / vl : vec3(0.0, 0.0, 1.0);
     if (dot(n, v) < 0.0) n = -n;
     vec3 r = reflect(-v, n);
     float facing = max(dot(n, v), 0.0);
-    float fresnel = 0.06 + 0.94 * pow(1.0 - facing, 5.0);
+    float fresnel = 0.06 + 0.94 * pow(max(1.0 - facing, 0.0), 5.0);
 
     vec3 chrome = mix(vec3(0.86, 0.95, 1.0), uAccent, 0.18);
     vec3 col = environment(r) * mix(chrome, vec3(1.0), fresnel);
@@ -728,7 +728,7 @@ const JEWEL_FRAGMENT = /* glsl */ `
     col *= 1.0 - 0.45 * edge.y;
     col += mix(vec3(1.0), uAccent, 0.2) * edge.z * (0.8 + 1.6 * fresnel);
     col += uAccent * edge.x * 1.4;
-    col += uAccent * pow(1.0 - facing, 3.0) * 0.4;
+    col += uAccent * pow(max(1.0 - facing, 0.0), 3.0) * 0.4;
     gl_FragColor = vec4(col, 1.0);
   }
 `;
@@ -839,7 +839,7 @@ const COMPOSITE_FRAGMENT = /* glsl */ `
     vec2 v = vUv - 0.5;
     color *= 1.0 - dot(v, v) * 0.7;
     color = aces(color * 1.05);
-    color = pow(color, vec3(1.0 / 2.2));
+    color = pow(max(color, vec3(0.0)), vec3(1.0 / 2.2));
     color = mix(color, vec3(0.92, 0.97, 1.0), uWhite);
     color += dither(gl_FragCoord.xy) / 255.0;
     gl_FragColor = vec4(color, 1.0);

@@ -111,7 +111,7 @@ const SHIP_FRAGMENT = /* glsl */ `
 
   void main() {
     if (uFade <= 0.001) discard;
-    vec3 n = normalize(vNormal);
+    vec3 n = safeNormalize(vNormal, vec3(0.0, 0.0, 1.0));
     vec3 v = safeNormalize(uCamera - vWorld, vec3(0.0, 0.0, 1.0));
     if (dot(n, v) < 0.0) n = -n;
 
@@ -152,7 +152,7 @@ const SHIP_FRAGMENT = /* glsl */ `
       float hy = textureGrad(uDetailMap, mapUv + vec2(0.0, step2.y), mapDx, mapDy).r;
       vec3 tu = onTop ? vec3(1.0, 0.0, 0.0) : (sideways ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0));
       vec3 tv = onTop ? vec3(0.0, 0.0, 1.0) : vec3(0.0, 1.0, 0.0);
-      vec3 objectNormal = normalize(vObjectNormal);
+      vec3 objectNormal = safeNormalize(vObjectNormal, vec3(0.0, 1.0, 0.0));
       vec3 bumped = objectNormal - (tu * (hx - detail.r) + tv * (hy - detail.r)) * 3.0;
       n = safeNormalize(uRotation * bumped, n);
       if (dot(n, v) < 0.0) n = -n;
@@ -181,8 +181,8 @@ const SHIP_FRAGMENT = /* glsl */ `
     vec3 h = safeNormalize(uSunDir + v, n);
     col += uSunColor * pow(max(dot(n, h), 0.0), canopy ? 160.0 : (solar ? 24.0 : 48.0)) * (canopy ? 2.0 : (solar ? 0.12 : 0.45)) * tone;
     float facing = max(dot(n, v), 0.0);
-    col += uAir * pow(1.0 - facing, 4.0) * 0.35;
-    col += uSunColor * pow(1.0 - facing, 3.0) * max(dot(-v, uSunDir), 0.0) * 0.9;
+    col += uAir * pow(max(1.0 - facing, 0.0), 4.0) * 0.35;
+    col += uSunColor * pow(max(1.0 - facing, 0.0), 3.0) * max(dot(-v, uSunDir), 0.0) * 0.9;
 
     col += vec3(1.0, 0.84, 0.58) * ports * 2.6 * uWindows;
 
@@ -300,7 +300,7 @@ const PARTICLE_FRAGMENT = /* glsl */ `
     if (vKind < 0.5) {
       vec3 hot = mix(vec3(1.9, 1.75, 1.5), vec3(1.7, 1.05, 0.3), smoothstep(0.0, 0.18, vAge));
       vec3 cooling = mix(vec3(1.1, 0.38, 0.08), vec3(0.25, 0.05, 0.02), smoothstep(0.35, 0.9, vAge));
-      col = mix(hot, cooling, smoothstep(0.15, 0.45, vAge)) * (1.0 - r * r) * pow(1.0 - vAge, 1.2);
+      col = mix(hot, cooling, smoothstep(0.15, 0.45, vAge)) * (1.0 - r * r) * pow(max(1.0 - vAge, 0.0), 1.2);
     } else if (vKind < 1.5) {
       col = vec3(2.6, 2.1, 1.3) * (1.0 - smoothstep(0.2, 1.0, r)) * (1.0 - vAge);
     } else {
@@ -324,7 +324,7 @@ const SHOCK_FRAGMENT = /* glsl */ `
   varying float vRadius;
   void main() {
     float edge = smoothstep(0.82, 0.985, vRadius) * (1.0 - smoothstep(0.985, 1.0, vRadius));
-    vec3 col = mix(vec3(1.3, 1.5, 1.7), vec3(0.9, 0.45, 0.25), uAge) * edge * pow(1.0 - uAge, 1.5);
+    vec3 col = mix(vec3(1.3, 1.5, 1.7), vec3(0.9, 0.45, 0.25), uAge) * edge * pow(max(1.0 - uAge, 0.0), 1.5);
     gl_FragColor = vec4(col, 1.0);
   }
 `;
@@ -537,13 +537,13 @@ const SHIELD_FRAGMENT = /* glsl */ `
       vec4 hit = uHits[i];
       if (hit.w < 0.0) continue;
       float reach = distance(vLocal, hit.xyz);
-      float ring = exp(-pow((reach - hit.w * 0.42) / 0.03, 2.0));
+      float ring = exp(-pow(abs(reach - hit.w * 0.42) / 0.03, 2.0));
       float spot = exp(-reach * reach * 500.0) * 2.0;
       glow += (ring * 0.7 + spot) * (1.0 - hit.w) * (1.0 - hit.w);
     }
     vec3 v = normalize(uCamera - vWorld);
-    vec3 n = normalize(vWorldNormal);
-    float rim = pow(1.0 - abs(dot(n, v)), 2.0);
+    vec3 n = vWorldNormal * inversesqrt(max(dot(vWorldNormal, vWorldNormal), 1e-8));
+    float rim = pow(max(1.0 - abs(dot(n, v)), 0.0), 2.0);
     // The hex lattice, projected from the three sides and blended by which one the shell faces, so
     // it wraps the hull without seams or stretching.
     vec3 lattice = vLocal * 38.0;
@@ -851,6 +851,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
   });
   let nextShock = 0;
   const flatten = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI / 2);
+  const hullInverse = new THREE.Quaternion();
   function shockwave(origin, quaternion, reach, life = 1.4) {
     const shock = shocks[nextShock];
     nextShock = (nextShock + 1) % shocks.length;
@@ -1391,7 +1392,10 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     const position = visit.position.copy(visit.start);
     // The line of travel in the hull's own coordinates, and how far the hull reaches along it each way.
     orient(ship.group, visit.heading, visit.up);
-    const travelAxis = uniforms.uStretchAxis.value.copy(visit.velocity).normalize().applyQuaternion(ship.group.quaternion.clone().invert());
+    // A hull standing still has no line of travel; it stretches along its own length.
+    const travelAxis = visit.velocity.lengthSq() > 1e-12
+      ? uniforms.uStretchAxis.value.copy(visit.velocity).normalize().applyQuaternion(hullInverse.copy(ship.group.quaternion).invert())
+      : uniforms.uStretchAxis.value.set(0, 0, 1);
     let rear = Infinity;
     let front = -Infinity;
     for (const corner of ship.design.extremes) {
