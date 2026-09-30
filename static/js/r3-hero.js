@@ -36,6 +36,7 @@ import { createEnvironment } from './r3-environment.js'; // [r3:environment]
 import { pickScenario } from './r3-shipyard.js';
 import { decorateSurvey } from './r3-guide.js'; // [r3:guide]
 import { createOrbit } from './r3-camera.js'; // [r3:navigator]
+import { createSensors } from './r3-sensors.js'; // [r3:gunnery]
 
 const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -744,6 +745,7 @@ const COMPOSITE_FRAGMENT = /* glsl */ `
   uniform float uFlash;
   uniform float uFlashSize;
   uniform float uWhite;      // the jump's flash, over everything
+  uniform float uSensor;     // [r3:gunnery] the tactical scope: 0 off, 1 on
   varying vec2 vUv;
   ${SCRUB}
   vec3 aces(vec3 x) {
@@ -766,7 +768,12 @@ const COMPOSITE_FRAGMENT = /* glsl */ `
   }
   void main() {
     vec3 color = scrub(texture2D(tScene, vUv).rgb);
-    color += scrub(texture2D(tBloomNear, vUv).rgb) * 0.8 + scrub(texture2D(tBloomFar, vUv).rgb) * 0.4;
+    color += (scrub(texture2D(tBloomNear, vUv).rgb) * 0.8 + scrub(texture2D(tBloomFar, vUv).rgb) * 0.4) * (1.0 - 0.85 * uSensor);
+    // [r3:gunnery] Under the scope the sky goes dim and monochrome, on a faint grid.
+    float sensed = dot(color, vec3(0.2126, 0.7152, 0.0722));
+    color = mix(color, uAccent * sensed * 0.55 + vec3(0.004, 0.008, 0.012), uSensor * 0.8);
+    vec2 cell = abs(fract(gl_FragCoord.xy / (48.0 * uRatio)) - 0.5);
+    color += uAccent * (1.0 - smoothstep(0.0, 0.012, 0.5 - max(cell.x, cell.y))) * 0.05 * uSensor;
 
     vec2 d = (gl_FragCoord.xy - uSunPx) / uRatio;
     vec3 sun = fourPoint(d, 42.0, 0.9, 4.0);
@@ -775,7 +782,7 @@ const COMPOSITE_FRAGMENT = /* glsl */ `
     float ring = exp(-pow(abs(length(d) - 64.0) / 5.0, 2.0)) * 0.04;
     vec3 flare = uSunColor * (sun.x * 0.9 + sun.y * 1.6 + wide.x * 0.12 + wide.y * 0.22) + mix(uAccent, uSunColor, 0.4) * (streak * 0.22 + ring);
     float overPlanet = 1.0 - smoothstep(uPlanetPx.z - 2.0, uPlanetPx.z + 2.0, length(gl_FragCoord.xy - uPlanetPx.xy));
-    color += flare * uSunShow * (1.0 - 0.65 * overPlanet);
+    color += flare * uSunShow * (1.0 - 0.65 * overPlanet) * (1.0 - 0.7 * uSensor);
     vec2 d2 = (gl_FragCoord.xy - uSun2Px) / uRatio;
     vec3 second = fourPoint(d2, 30.0, 0.9, 3.0);
     vec3 secondWide = fourPoint(d2, 14.0, 3.0, 14.0);
@@ -954,7 +961,7 @@ function start(hero, art) {
     survey.replaceChildren();
     const name = vista.kind === 'planet' ? world.name : vista.name;
     const note = vista.kind === 'planet' ? world.note : vista.kind === 'shipyard' ? `${world.name} · ${vista.note.split(' · ').pop()}` : vista.note;
-    for (const [part, text] of [['tag', 'Survey'], ['name', name], ['note', note], ['jump', 'Jump ⟫']]) {
+    for (const [part, text] of [['tag', 'Survey'], ['name', name], ['note', note], ['jump', 'Jump ⟫'], ['sensors', 'Sensors']]) { // [r3:gunnery] sensors
       const span = document.createElement('span');
       span.className = `r3-survey__${part}`;
       span.textContent = text;
@@ -1111,11 +1118,14 @@ function start(hero, art) {
     uFlash: { value: 0 },
     uFlashSize: { value: 1 },
     uWhite: { value: 0 },
+    uSensor: { value: 0 }, // [r3:gunnery]
   };
   const compositeMaterial = fullscreenMaterial(COMPOSITE_FRAGMENT, compositeUniforms);
   // [r3:environment] The backdrop as weather on the ships: flares, a black hole's pull, a binary's light.
   const environment = createEnvironment({ sky: skyUniforms, composite: compositeUniforms, sunDir, sunColor, reduceMotion });
   environment.onArrive({ kit: fleet.kit, vista });
+  // [r3:gunnery] Hold Shift, or tap SENSORS, for the tactical scope.
+  const sensors = createSensors({ hero, overlay: art || hero, survey, fleet: () => fleet, uniform: compositeUniforms.uSensor, reduceMotion, requestFrame });
   function blur(source, via, target, radius) {
     blurMaterial.uniforms.tInput.value = source.texture;
     blurMaterial.uniforms.uDirection.value.set(radius / source.width, 0);
@@ -1737,6 +1747,7 @@ function start(hero, art) {
     director.update(reduceMotion ? 0 : dt); // [r3:director]
     environment.update(reduceMotion ? 0 : dt, jump.active); // [r3:environment]
     const shipFlash = fleet.update(reduceMotion ? 0 : dt);
+    sensors.update(reduceMotion ? 0 : dt); // [r3:gunnery]
     // An explosion shakes the camera for a moment.
     if (shipFlash.shake > 0) {
       camera.position.x += (Math.random() - 0.5) * shipFlash.shake * 0.16;

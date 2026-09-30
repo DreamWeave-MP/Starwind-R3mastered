@@ -16,6 +16,10 @@ import * as THREE from './vendor/three.module.min.js';
 import { ERAS, FACTIONS, buildCapital, buildFighter, pickScenario } from './r3-shipyard.js';
 import { steerScenario } from './r3-memory.js'; // [r3:memory]
 
+// [r3:gunnery] A capital ship's subsystems, in the order their pips read on its brackets.
+const SYSTEMS = ['engines', 'weapons', 'hangar', 'bridge'];
+const DAMAGE_WORDS = ['nominal', 'damaged', 'offline', 'destroyed'];
+
 // The planet, which the sky draws as a disc, stands behind the ships as a sphere: its front surface
 // is uPlanetDepth.x from the camera at its limb, uPlanetDepth.y nearer at the disc's centre. A
 // fragment of a ship, trail, bolt or blast that lies behind that surface is hidden, so a fighter
@@ -875,9 +879,24 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     const label = document.createElement('span');
     label.className = 'r3-contact__label';
     element.append(label);
+    // [r3:gunnery] What a hit did, for a moment, and the four subsystems' damage as pips.
+    const status = document.createElement('span');
+    status.className = 'r3-contact__status';
+    const systems = document.createElement('span');
+    systems.className = 'r3-contact__systems';
+    const pips = {};
+    for (const key of SYSTEMS) {
+      const pip = document.createElement('i');
+      pip.dataset.system = key;
+      pip.dataset.level = '0';
+      pip.textContent = key[0];
+      systems.append(pip);
+      pips[key] = pip;
+    }
+    element.append(status, systems);
     overlay.append(element);
     ownedElements.push(element);
-    return { element, label };
+    return { element, label, status, pips };
   }
   // Fits a contact to points of an object, as the camera sees them.
   function frame(contact, object, points, age) {
@@ -925,6 +944,8 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
       slot, state: 'waiting', until: reduceMotion ? 0 : 2.5 + slot * 7, age: 0, ship: null,
       start: new THREE.Vector3(), velocity: new THREE.Vector3(), heading: new THREE.Vector3(), up: new THREE.Vector3(), position: new THREE.Vector3(),
       length: 1, cruise: 30, contact: makeContact(), rect: null, blasts: 0, shield: 1, hull: 0, nextVolley: 0, fleeing: false,
+      // [r3:gunnery] Subsystem damage, 0 to 3 each, and the fire and secondaries it causes.
+      shieldMax: 1, systems: { engines: 0, weapons: 0, hangar: 0, bridge: 0 }, nextEmber: 0, secondaries: 0, nextSecondary: 0, statusUntil: 0,
     };
   }
   const visits = [makeVisit(0)];
@@ -983,6 +1004,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     visit.hull = 0;
     visit.blasts = 0;
     visit.fleeing = false;
+    resetSystems(visit); // [r3:gunnery]
     visit.nextVolley = clock + 2 + random() * 2;
     const label = scenario.labels ? scenario.labels[sides.indexOf(side)] : ship.labels[Math.floor(random() * ship.labels.length)];
     visit.contact.label.textContent = `${side.name} ▸ ${label}`;
@@ -1009,7 +1031,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     const left = narrow ? width * 0.5 : Math.max(free + 40, width * 0.48);
     const right = width * 0.98;
     const mid = (left + right) / 2;
-    const cruising = visits.filter((visit) => visit.state === 'cruising' && visit.ship);
+    const cruising = visits.filter((visit) => visit.state === 'cruising' && visit.ship && visit.systems.hangar === 0); // [r3:gunnery] a hit hangar launches nothing
     // ?pass=dive, climb, cross or launch picks the path, for screenshots.
     const kinds = ['dive', 'climb', 'cross', 'launch'];
     const asked = kinds.indexOf(new URLSearchParams(location.search).get('pass'));
@@ -1130,7 +1152,8 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
   // Turbolasers: a volley of three to five bolts from batteries along the hull at points on the
   // enemy's, some wide.
   function volley(from, to) {
-    const count = 3 + Math.floor(random() * 3);
+    const count = 3 + Math.floor(random() * 3) - 2 * from.systems.weapons; // [r3:gunnery] fewer with weapons hit
+    if (count <= 0) return;
     const laser = linear(from.ship.side.laser).multiplyScalar(1.4);
     from.ship.group.updateMatrixWorld(true);
     to.ship.group.updateMatrixWorld(true);
@@ -1188,6 +1211,141 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
       target.age = Math.max(target.age, target.cruise - 1.6);
     } else if (target.hull >= 8) {
       explode(target);
+    }
+  }
+
+  // [r3:gunnery] Subsystem targeting. Where a click lands on a capital ship is judged from its hull
+  // as the camera sees it: the stern third is its engines, the bow third its weapons, and between
+  // them the bridge above the keel and the hangar below. While its shields hold a hit only drains
+  // them; once they fail each hit damages the subsystem struck, which changes how the ship fights,
+  // flees and dies.
+  const zoneCentre = new THREE.Vector3();
+  const zoneBow = new THREE.Vector3();
+  const zoneTop = new THREE.Vector3();
+  const zoneSpan = new WeakMap();
+  function spanOf(design) {
+    let span = zoneSpan.get(design);
+    if (!span) {
+      let low = Infinity;
+      let high = -Infinity;
+      for (const corner of design.extremes) {
+        low = Math.min(low, corner.z);
+        high = Math.max(high, corner.z);
+      }
+      span = { low, high: Math.max(high, low + 0.1) };
+      zoneSpan.set(design, span);
+    }
+    return span;
+  }
+  function zoneAt(visit, x, y) {
+    const group = visit.ship.group;
+    group.updateMatrixWorld(true);
+    screenOf(localPoint.set(0, 0, 0).applyMatrix4(group.matrixWorld), zoneCentre);
+    screenOf(localPoint.set(0, 0, 0.5).applyMatrix4(group.matrixWorld), zoneBow);
+    screenOf(localPoint.set(0, 0.5, 0).applyMatrix4(group.matrixWorld), zoneTop);
+    const ax = zoneBow.x - zoneCentre.x;
+    const ay = zoneBow.y - zoneCentre.y;
+    const along = ax * ax + ay * ay;
+    const dx = x - zoneCentre.x;
+    const dy = y - zoneCentre.y;
+    const dorsal = dx * (zoneTop.x - zoneCentre.x) + dy * (zoneTop.y - zoneCentre.y) > 0;
+    // Seen bow on, the hull has no length on screen to read: judge by height alone.
+    if (along < 25) return dorsal ? 'bridge' : 'hangar';
+    const { low, high } = spanOf(visit.ship.design);
+    const z = ((dx * ax + dy * ay) / along) * 0.5;
+    const u = (z - low) / (high - low);
+    if (u < 0.3) return 'engines';
+    if (u > 0.7) return 'weapons';
+    return dorsal ? 'bridge' : 'hangar';
+  }
+  // A point of a subsystem on the hull, in the world.
+  function zonePoint(visit, zone, out) {
+    const { low, high } = spanOf(visit.ship.design);
+    const mid = (low + high) / 2;
+    const local = {
+      engines: [0, 0.02, low + 0.08 * (high - low)],
+      weapons: [0, 0.03, high - 0.18 * (high - low)],
+      bridge: [0, 0.14, mid - 0.1 * (high - low)],
+      hangar: [0, -0.06, mid + 0.05 * (high - low)],
+    }[zone];
+    out.set(local[0] + (random() - 0.5) * 0.08, local[1] + (random() - 0.5) * 0.04, local[2] + (random() - 0.5) * 0.08);
+    return out.multiplyScalar(1).applyMatrix4(visit.ship.group.matrixWorld);
+  }
+  function resetSystems(visit) {
+    for (const key of SYSTEMS) {
+      visit.systems[key] = 0;
+      visit.contact.pips[key].dataset.level = '0';
+    }
+    visit.shieldMax = visit.shield;
+    visit.secondaries = 0;
+    visit.statusUntil = 0;
+    visit.contact.status.textContent = '';
+    visit.contact.element.classList.remove('is-engaged', 'is-announcing');
+  }
+  function announce(visit, text) {
+    visit.contact.status.textContent = text;
+    visit.contact.element.classList.add('is-engaged', 'is-announcing');
+    visit.statusUntil = clock + 2.2;
+  }
+  // Slows a cruising ship without moving it: it keeps its place and goes on at the new speed.
+  function slow(visit, factor) {
+    visit.start.addScaledVector(visit.velocity, visit.age);
+    visit.velocity.multiplyScalar(factor);
+    visit.start.addScaledVector(visit.velocity, -visit.age);
+  }
+  function strike(visit, x, y) {
+    const zone = zoneAt(visit, x, y);
+    const point = zonePoint(visit, zone, new THREE.Vector3());
+    const shield = visit.ship.shield;
+    if (visit.shield > 0) {
+      // The shields take it: they flare over the spot and drain.
+      visit.shield = Math.max(0, visit.shield - (0.2 + 0.08 * random()) * visit.shieldMax);
+      const hit = shield.hits[shield.next];
+      shield.next = (shield.next + 1) % shield.hits.length;
+      hit.age = 0;
+      const spot = point.clone().applyMatrix4(visit.ship.group.matrixWorld.clone().invert());
+      shield.onShell(spot, hit.direction);
+      emit(point, 8, 1, [visit.length * 0.05, visit.length * 0.2], [visit.length * 0.004, visit.length * 0.008], [0.3, 0.6]);
+      flashAt(point, 0.3, 0.35);
+      announce(visit, visit.shield > 0 ? `Shields ▸ ${Math.round((100 * visit.shield) / visit.shieldMax)}%` : 'Shields ▸ down');
+      return;
+    }
+    const level = Math.min(3, visit.systems[zone] + 1);
+    visit.systems[zone] = level;
+    visit.contact.pips[zone].dataset.level = String(level);
+    visit.hull += 1;
+    blast(point, visit.length * 0.45, 0.45 + 0.15 * level);
+    flashAt(point, 0.35, 0.45);
+    shake = Math.max(shake, 0.12 + 0.05 * level);
+    announce(visit, `${zone} ▸ ${DAMAGE_WORDS[level]}`);
+    if (zone === 'engines') slow(visit, level === 1 ? 0.6 : 0.55);
+    if (zone === 'hangar') visit.secondaries += 2 + level;
+    const wrecked = SYSTEMS.filter((key) => visit.systems[key] >= 3).length;
+    if (visit.systems.bridge >= 3 || wrecked >= 2 || visit.hull >= 9) {
+      explode(visit);
+    } else if (zone === 'bridge' && level >= 2 && random() < 0.55) {
+      // Command is gone and the crew run for it, if the hyperdrive still answers.
+      visit.fleeing = true;
+      visit.age = Math.max(visit.age, visit.cruise - 1.6);
+      announce(visit, visit.systems.engines >= 2 ? 'Bridge ▸ abandoned' : 'Bridge ▸ fleeing');
+    }
+  }
+  // Damage burns while the ship cruises: its engines trail fire, its hangar pops with secondaries,
+  // and its brackets' readout fades after a hit.
+  function burnDamage(visit, dt) {
+    if (clock > visit.statusUntil) visit.contact.element.classList.remove('is-announcing');
+    if (reduceMotion) return;
+    const engines = visit.systems.engines;
+    if (engines > 0 && clock >= visit.nextEmber) {
+      visit.nextEmber = clock + 0.09 / engines;
+      emit(zonePoint(visit, 'engines', localPoint), 2 + engines, 0, [visit.length * 0.02, visit.length * 0.06], [visit.length * 0.012, visit.length * 0.028], [0.5, 1.0]);
+    }
+    if (visit.secondaries > 0 && clock >= visit.nextSecondary) {
+      visit.secondaries -= 1;
+      visit.nextSecondary = clock + 0.35 + random() * 0.6;
+      const point = zonePoint(visit, 'hangar', localPoint);
+      blast(point, visit.length * 0.28, 0.35);
+      flashAt(point, 0.22, 0.3);
     }
   }
 
@@ -1264,7 +1422,15 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     } else if (visit.state === 'cruising') {
       position.addScaledVector(visit.velocity, visit.age);
       boost = Math.max(0, (visit.age - (visit.cruise - 1.6)) / 1.6);
-      if (visit.age >= visit.cruise && !reduceMotion) {
+      if (visit.systems.engines >= 2) boost *= 0.5 + 0.5 * Math.sin(clock * 37) * Math.sin(clock * 11); // [r3:gunnery] a failing drive stutters
+      burnDamage(visit, dt); // [r3:gunnery]
+      if (visit.age >= visit.cruise && !reduceMotion && visit.systems.engines >= 2) {
+        // [r3:gunnery] The hyperdrive is gone: it charges, stutters and fails, and the ship limps on.
+        visit.cruise = visit.age + 5 + random() * 3;
+        visit.fleeing = false;
+        flashAt(zonePoint(visit, 'engines', localPoint), 0.5, 0.45);
+        announce(visit, 'Hyperdrive ▸ failed');
+      } else if (visit.age >= visit.cruise && !reduceMotion) {
         visit.state = 'leaving';
         visit.start.copy(position);
         visit.age = 0;
@@ -1338,7 +1504,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     for (const [from, to] of [[a, b], [b, a]]) {
       if (from.fleeing || clock < from.nextVolley) continue;
       volley(from, to);
-      from.nextVolley = clock + 1.3 + random() * 1.1;
+      from.nextVolley = clock + 1.3 + random() * 1.1 + from.systems.weapons * 1.1; // [r3:gunnery]
     }
   }
 
@@ -1582,6 +1748,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     onDestroyed: (listener) => listeners.destroyed.push(listener),
     scenario, sides, visits,
     capitals, fighters: allFighters, env, // [r3:environment]
+    pass, zoneAt, // [r3:gunnery] for the sensors: the fighters' passes, and where a point lands on a hull
   };
 
   return {
@@ -1617,7 +1784,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
         target.capital.until = clock + 5;
         target.capital.contact.element.classList.remove('is-locked');
       } else {
-        explode(target.capital);
+        strike(target.capital, x, y); // [r3:gunnery] shields first, then a subsystem
       }
       return true;
     },

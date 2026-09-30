@@ -51,7 +51,7 @@ export function createEnvironment({ sky, composite, sunDir, sunColor, reduceMoti
     let element = statuses.get(visit.contact);
     if (!element) {
       element = document.createElement('span');
-      element.className = 'r3-contact__status'; // [r3:environment] styled in brand.sass
+      element.className = 'r3-contact__weather'; // [r3:environment] styled in brand.sass
       visit.contact.element.append(element);
       statuses.set(visit.contact, element);
     }
