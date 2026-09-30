@@ -2147,13 +2147,6 @@ function start(hero, art) {
   survey.addEventListener('click', (event) => {
     if (event.target.closest('.r3-survey__jump')) beginJump();
   });
-  hero.addEventListener('dblclick', (event) => {
-    const bounds = hero.getBoundingClientRect();
-    const point = { x: event.clientX - bounds.left, y: event.clientY - bounds.top };
-    if (event.button > 0 || event.target.closest('a, button, input, summary, [role="button"], .r3-survey') || overText(point)) return;
-    if (fleet.aimed(point.x, point.y) || director.aimed(point.x, point.y) /* [r3:director] */ || overJewel(point) || overPlanet(point) || systemWorldAt(point)) return;
-    beginJump();
-  });
   applyWorld(world);
   if (vista.kind === 'heatDeath') fleet.leave();
 
