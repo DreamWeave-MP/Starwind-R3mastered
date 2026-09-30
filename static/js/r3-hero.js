@@ -1386,6 +1386,13 @@ function start(hero, art) {
       event.r3Taken = true;
       return;
     }
+    // [r3:pilot] A press on the jewel is the pilot's, before anything behind it: a click calls the
+    // fleet, a drag flies it. [r3:qa] It came after the ships, so a fighter crossing under the
+    // jewel was shot instead.
+    if (pilot.press(event, { x: event.clientX - bounds.left, y: event.clientY - bounds.top })) {
+      event.r3Taken = true;
+      return;
+    }
     // A ship under the pointer is shot down, before the star or the planet take the click, and a
     // world of a solar system is jumped to.
     if (fleet.shoot(event.clientX - bounds.left, event.clientY - bounds.top)) {
@@ -1410,8 +1417,6 @@ function start(hero, art) {
       beginJump(body.world.name);
       return;
     }
-    // [r3:pilot] A press on the jewel is the pilot's: a click calls the fleet, a drag flies it.
-    if (pilot.press(event, { x: event.clientX - bounds.left, y: event.clientY - bounds.top })) event.r3Taken = true;
   }, { passive: true });
 
   // Drag the planet, as the moon on the l3i site drags: the surface follows the pointer and keeps
