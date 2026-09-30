@@ -137,6 +137,39 @@
     color: var(--dw-accent)
     opacity: 1
 
+// [r3:guide] The readout's link to the Game Guide's pages for this world (static/js/r3-guide.js).
+.r3-survey__guide
+  color: inherit
+  text-decoration: none
+  opacity: .7
+  pointer-events: auto
+  cursor: pointer
+  transition: opacity .2s ease, color .2s ease
+
+  &:hover
+    color: var(--dw-accent)
+    opacity: 1
+
+// [r3:guide] A phone's readout sits in the corner beside the title, with room for the count only.
+@media (max-width: 600px)
+  .r3-survey__guide-more
+    display: none
+
+  // The corner readout's second line runs under the top of the text column. The column's gaps and
+  // the kicker, which holds only labels, let taps through to it; everything else in the column
+  // still takes them.
+  .dw-hero--art .dw-hero__grid
+    pointer-events: none
+
+    > :not(.dw-hero__text)
+      pointer-events: auto
+
+  .dw-hero--art .dw-hero__text
+    pointer-events: none
+
+    > :not(.dw-kicker)
+      pointer-events: auto
+
 .r3-survey__note
   color: var(--dw-text-muted)
 
