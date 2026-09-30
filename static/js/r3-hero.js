@@ -29,6 +29,7 @@
 import * as THREE from './vendor/three.module.min.js';
 import { pickWorld } from './r3-worlds.js';
 import { createFleet } from './r3-ships.js';
+import { pickScenario } from './r3-shipyard.js';
 
 const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -184,6 +185,8 @@ const SKY_FRAGMENT = /* glsl */ `
   uniform float uRatio;
   uniform vec2 uDrift;
   uniform vec2 uScroll;      // the orbit's drift, css pixels, far layer
+  uniform vec3 uHyper;       // hyperspace: the stars' stretch, how much of the planet shows, the tunnel
+  uniform vec2 uHyperAt;     // the vanishing point, device pixels
   uniform vec3 uPlanet;      // centre x, y and radius, in device pixels
   uniform vec3 uSunDir;      // towards the sun, view space: x right, y up, z to the viewer
   uniform vec3 uSunColor;
@@ -329,6 +332,13 @@ const SKY_FRAGMENT = /* glsl */ `
     return tint * (core * (0.9 + 2.5 * bright) + spike * 0.55) * twinkle;
   }
 
+  // All three layers of stars, streaming past at their own speeds.
+  vec3 starField(vec2 css) {
+    return starLayer(css + uDrift * 8.0 + uScroll, 61.0, 1.0, 0.0)
+         + starLayer(css + uDrift * 16.0 + uScroll * 1.9, 97.0, 2.0, 0.0) * 0.8
+         + starLayer(css + uDrift * 30.0 + uScroll * 3.4, 173.0, 3.0, 1.0);
+  }
+
   void main() {
     vec2 px = gl_FragCoord.xy;
     vec2 css = px / uRatio;
@@ -352,10 +362,22 @@ const SKY_FRAGMENT = /* glsl */ `
 
     // Stars, hidden behind the planet. The camera is in orbit, so they stream past, the nearer
     // layers faster than the far ones.
-    vec3 stars = starLayer(css + uDrift * 8.0 + uScroll, 61.0, 1.0, 0.0)
-               + starLayer(css + uDrift * 16.0 + uScroll * 1.9, 97.0, 2.0, 0.0) * 0.8
-               + starLayer(css + uDrift * 30.0 + uScroll * 3.4, 173.0, 3.0, 1.0);
-    col += stars * (1.0 - onPlanet);
+    vec3 stars;
+    if (uHyper.x > 0.001) {
+      // Into hyperspace: each star drawn again at points pulled toward the vanishing point, so it
+      // stretches out from there into a streak.
+      stars = vec3(0.0);
+      vec2 centre = uHyperAt / uRatio;
+      for (int i = 0; i < 12; i++) {
+        float f = float(i) / 11.0;
+        stars += starField(mix(css, centre, f * uHyper.x * 0.9)) * (1.2 - f * 0.6);
+      }
+      stars *= 0.2 + 0.25 * uHyper.x;
+    } else {
+      stars = starField(css);
+    }
+    col += stars * (1.0 - onPlanet * uHyper.y);
+    vec3 sky = col;
     vec3 moonsOver = moon(col, px + uDrift * 12.0 * uRatio, uMoonA, uMoonColorA, sun);
     moonsOver = moon(moonsOver, px + uDrift * 12.0 * uRatio, uMoonB, uMoonColorB, sun);
     col = mix(moonsOver, col, onPlanet);
@@ -498,6 +520,15 @@ const SKY_FRAGMENT = /* glsl */ `
       }
     }
 
+    // In hyperspace the planet is left behind, and a tunnel of blue light streams past.
+    col = mix(sky, col, uHyper.y);
+    if (uHyper.z > 0.001) {
+      vec2 d = (px - uHyperAt) / uRatio;
+      float around = atan(d.y, d.x);
+      float streaks = pow(noise2(vec2(around * 38.0, uTime * 0.7)), 5.0) + 0.4 * pow(noise2(vec2(around * 91.0, uTime * 1.3 + 7.0)), 7.0);
+      float outward = smoothstep(20.0, 420.0, length(d));
+      col += vec3(0.45, 0.72, 1.0) * streaks * outward * uHyper.z * 1.6 + vec3(0.05, 0.1, 0.2) * uHyper.z * outward;
+    }
     gl_FragColor = vec4(col, 1.0);
   }
 `;
@@ -665,6 +696,7 @@ const COMPOSITE_FRAGMENT = /* glsl */ `
   uniform vec2 uFlashPx;     // a ship's hyperspace flash, device pixels
   uniform float uFlash;
   uniform float uFlashSize;
+  uniform float uWhite;      // the jump's flash, over everything
   varying vec2 vUv;
   ${SCRUB}
   vec3 aces(vec3 x) {
@@ -720,6 +752,7 @@ const COMPOSITE_FRAGMENT = /* glsl */ `
     color *= 1.0 - dot(v, v) * 0.7;
     color = aces(color * 1.05);
     color = pow(color, vec3(1.0 / 2.2));
+    color = mix(color, vec3(0.92, 0.97, 1.0), uWhite);
     color += dither(gl_FragCoord.xy) / 255.0;
     gl_FragColor = vec4(color, 1.0);
   }
@@ -852,20 +885,27 @@ function start(hero, art) {
   const bottom = token('--dw-bg-0', '#070c11');
   // The world this page shows. Its atmosphere keeps a quarter of the site's cyan, so the arc
   // still reads as Starwind's whatever the world.
-  const world = pickWorld();
+  // A jump to hyperspace swaps the world for another (applyWorld, below), updating everything
+  // that depends on it in place.
+  let world = pickWorld();
   const worldColor = (hex) => new THREE.Color(hex).convertSRGBToLinear();
-  const air = worldColor(world.air).lerp(accent, 0.25).multiplyScalar(0.9);
-  // Which world it is, read out small in the corner like a survey scanner's.
+  const air = new THREE.Color();
+  // Which world it is, read out small in the corner like a survey scanner's. A click on it jumps
+  // to another.
   const survey = document.createElement('p');
   survey.className = 'r3-survey';
   survey.setAttribute('aria-hidden', 'true');
-  for (const [part, text] of [['tag', 'Survey'], ['name', world.name], ['note', world.note]]) {
-    const span = document.createElement('span');
-    span.className = `r3-survey__${part}`;
-    span.textContent = text;
-    survey.append(span);
-  }
+  survey.title = 'Jump to hyperspace';
   (art || hero).append(survey);
+  function showSurvey() {
+    survey.replaceChildren();
+    for (const [part, text] of [['tag', 'Survey'], ['name', world.name], ['note', world.note], ['jump', 'Jump ⟫']]) {
+      const span = document.createElement('span');
+      span.className = `r3-survey__${part}`;
+      span.textContent = text;
+      survey.append(span);
+    }
+  }
   const sunColor = new THREE.Color(1.0, 0.93, 0.82).multiplyScalar(1.6);
 
   const post = new THREE.Scene();
@@ -891,13 +931,13 @@ function start(hero, art) {
     uTop: { value: top },
     uBottom: { value: bottom },
     uCyan: { value: accent },
-    uViolet: { value: violet.clone().offsetHSL(world.sky.hue, 0, 0) },
-    uThird: { value: worldColor(world.air).multiplyScalar(0.8) },
-    uCloudsAt: { value: new THREE.Vector4(...world.sky.cyan, ...world.sky.violet) },
-    uThirdAt: { value: new THREE.Vector2(...world.sky.third) },
-    uSpread: { value: new THREE.Vector3(...world.sky.spread) },
-    uStrength: { value: new THREE.Vector3(...world.sky.strength) },
-    uNoise: { value: new THREE.Vector4(...world.sky.offset, world.sky.scale, world.sky.warp) },
+    uViolet: { value: new THREE.Color() },
+    uThird: { value: new THREE.Color() },
+    uCloudsAt: { value: new THREE.Vector4() },
+    uThirdAt: { value: new THREE.Vector2() },
+    uSpread: { value: new THREE.Vector3(1, 1, 1) },
+    uStrength: { value: new THREE.Vector3() },
+    uNoise: { value: new THREE.Vector4(0, 0, 1, 1) },
   });
   const skyUniforms = {
     tNebula: { value: nebulaTarget.texture },
@@ -913,23 +953,27 @@ function start(hero, art) {
     uAccent: { value: accent },
     uNight: { value: night },
     uAir: { value: air },
-    uLowland: { value: worldColor(world.lowland) },
-    uLand: { value: worldColor(world.land) },
-    uHighland: { value: worldColor(world.highland) },
-    uCloud: { value: worldColor(world.cloud) },
-    uCity: { value: worldColor(world.city) },
-    uWorldA: { value: new THREE.Vector4(0.3 + 0.4 * world.sea, 0.78 - 0.38 * world.clouds, world.cities, world.scale) },
-    uWorldB: { value: new THREE.Vector4(world.ice, world.lava, world.bands, world.floating) },
-    uWorldC: { value: new THREE.Vector4(wetness(world), world.aurora, world.ringed ? 1 : 0, 0) },
-    uSeed: { value: new THREE.Vector3(...world.seed) },
-    uRingNormal: { value: new THREE.Vector3(world.ringTilt[0] * 0.5, 0.2 + world.ringTilt[1] * 0.3, 1).normalize() },
-    uRingColor: { value: worldColor(world.highland).lerp(worldColor(world.cloud), 0.5).multiplyScalar(0.9) },
-    uRingSeed: { value: world.ringBands },
+    uLowland: { value: new THREE.Color() },
+    uLand: { value: new THREE.Color() },
+    uHighland: { value: new THREE.Color() },
+    uCloud: { value: new THREE.Color() },
+    uCity: { value: new THREE.Color() },
+    uWorldA: { value: new THREE.Vector4() },
+    uWorldB: { value: new THREE.Vector4() },
+    uWorldC: { value: new THREE.Vector4() },
+    uSeed: { value: new THREE.Vector3() },
+    uRingNormal: { value: new THREE.Vector3(0, 1, 0) },
+    uRingColor: { value: new THREE.Color() },
+    uRingSeed: { value: 0 },
+    uHyper: { value: new THREE.Vector3(0, 1, 0) },
+    uHyperAt: { value: new THREE.Vector2() },
     uMoonA: { value: new THREE.Vector4(0, 0, 0, 0) },
     uMoonB: { value: new THREE.Vector4(0, 0, 0, 0) },
-    uMoonColorA: { value: worldColor('#9a948c').lerp(worldColor('#c2ae92'), world.moonSeeds[0]) },
-    uMoonColorB: { value: worldColor('#8c9096').lerp(worldColor('#b8a8a0'), world.moonSeeds[3]) },
-    ...atmosphereOf(world),
+    uMoonColorA: { value: new THREE.Color() },
+    uMoonColorB: { value: new THREE.Color() },
+    uBetaR: { value: new THREE.Vector3() },
+    uBetaM: { value: 1 },
+    uAirShape: { value: new THREE.Vector3(0.011, 0.0035, 1.06) },
   };
   const ringNormal = skyUniforms.uRingNormal.value.clone();
   const skyMaterial = fullscreenMaterial(SKY_FRAGMENT, skyUniforms);
@@ -959,7 +1003,7 @@ function start(hero, art) {
     side: THREE.DoubleSide,
   }));
   pivot.add(jewel);
-  const fleet = createFleet({ scene, camera, time, sunDir, sunColor, air, reduceMotion, overlay: art || hero, anisotropy: renderer.capabilities.getMaxAnisotropy(), random: world.random });
+  let fleet = createFleet({ scene, camera, time, sunDir, sunColor, air, reduceMotion, overlay: art || hero, anisotropy: renderer.capabilities.getMaxAnisotropy(), random: world.random });
 
   const brightMaterial = fullscreenMaterial(BRIGHT_FRAGMENT, { tInput: { value: sceneTarget.texture }, uThreshold: { value: 1.1 } });
   const blurMaterial = fullscreenMaterial(BLUR_FRAGMENT, { tInput: { value: null }, uDirection: { value: new THREE.Vector2() } });
@@ -988,6 +1032,7 @@ function start(hero, art) {
     uFlashPx: { value: new THREE.Vector2(-1e4, -1e4) },
     uFlash: { value: 0 },
     uFlashSize: { value: 1 },
+    uWhite: { value: 0 },
   };
   const compositeMaterial = fullscreenMaterial(COMPOSITE_FRAGMENT, compositeUniforms);
   function blur(source, via, target, radius) {
@@ -1016,8 +1061,8 @@ function start(hero, art) {
   const starAngle = (Math.floor(Math.random() * 4) + 0.3 + 0.4 * Math.random()) * (Math.PI / 2);
   const starVelocity = { x: Math.cos(starAngle) * 34, y: Math.sin(starAngle) * 34 };
   const lastBounce = { x: -Infinity, y: -Infinity };
-  const worldAxis = new THREE.Vector3(world.tilt[0], world.tilt[1], 1).normalize();
-  const alignAxis = new THREE.Matrix4().makeRotationFromQuaternion(new THREE.Quaternion().setFromUnitVectors(worldAxis, new THREE.Vector3(0, 1, 0)));
+  const worldAxis = new THREE.Vector3(0, 0, 1);
+  const alignAxis = new THREE.Matrix4();
   const spinMatrix = new THREE.Matrix4();
   const planet = { x: 0, y: 0, radius: 1 };
   let sunAngle = 0;
@@ -1135,6 +1180,8 @@ function start(hero, art) {
     }
 
     fleet.layout({ width, height, free: textRight, narrow, ratio });
+    // Hyperspace opens in the middle of the free sky.
+    skyUniforms.uHyperAt.value.set(((narrow ? width * 0.6 : (textRight + width) / 2)) * ratio, height * 0.55 * ratio);
     perPixel = (2 * camera.position.z * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))) / height;
     jewelScale = jewelPx.radius * perPixel;
     anchor.set((jewelPx.x - width / 2) * perPixel, (height / 2 - jewelPx.y) * perPixel, 0);
@@ -1295,6 +1342,7 @@ function start(hero, art) {
       time.value += dt;
       clockTime += dt;
     }
+    updateJump(dt);
     const t = time.value;
 
     // The pointer, or a slow wander around the jewel when there is none.
@@ -1508,6 +1556,112 @@ function start(hero, art) {
     clock.getDelta();
     requestFrame();
   });
+
+  // The world: everything that depends on it, set in place, so a jump can swap it for another.
+  function applyWorld(next) {
+    world = next;
+    air.copy(worldColor(world.air)).lerp(accent, 0.25).multiplyScalar(0.9);
+    const nebula = nebulaMaterial.uniforms;
+    nebula.uViolet.value.copy(violet).offsetHSL(world.sky.hue, 0, 0);
+    nebula.uThird.value.copy(worldColor(world.air)).multiplyScalar(0.8);
+    nebula.uCloudsAt.value.set(...world.sky.cyan, ...world.sky.violet);
+    nebula.uThirdAt.value.set(...world.sky.third);
+    nebula.uSpread.value.set(...world.sky.spread);
+    nebula.uStrength.value.set(...world.sky.strength);
+    nebula.uNoise.value.set(...world.sky.offset, world.sky.scale, world.sky.warp);
+    const sky = skyUniforms;
+    sky.uLowland.value.copy(worldColor(world.lowland));
+    sky.uLand.value.copy(worldColor(world.land));
+    sky.uHighland.value.copy(worldColor(world.highland));
+    sky.uCloud.value.copy(worldColor(world.cloud));
+    sky.uCity.value.copy(worldColor(world.city));
+    sky.uWorldA.value.set(0.3 + 0.4 * world.sea, 0.78 - 0.38 * world.clouds, world.cities, world.scale);
+    sky.uWorldB.value.set(world.ice, world.lava, world.bands, world.floating);
+    sky.uWorldC.value.set(wetness(world), world.aurora, world.ringed ? 1 : 0, 0);
+    sky.uSeed.value.set(...world.seed);
+    ringNormal.set(world.ringTilt[0] * 0.5, 0.2 + world.ringTilt[1] * 0.3, 1).normalize();
+    sky.uRingNormal.value.copy(ringNormal);
+    sky.uRingColor.value.copy(worldColor(world.highland)).lerp(worldColor(world.cloud), 0.5).multiplyScalar(0.9);
+    sky.uRingSeed.value = world.ringBands;
+    sky.uMoonColorA.value.copy(worldColor('#9a948c')).lerp(worldColor('#c2ae92'), world.moonSeeds[0]);
+    sky.uMoonColorB.value.copy(worldColor('#8c9096')).lerp(worldColor('#b8a8a0'), world.moonSeeds[3]);
+    const atmosphere = atmosphereOf(world);
+    sky.uBetaR.value.copy(atmosphere.uBetaR.value);
+    sky.uBetaM.value = atmosphere.uBetaM.value;
+    sky.uAirShape.value.copy(atmosphere.uAirShape.value);
+    worldAxis.set(world.tilt[0], world.tilt[1], 1).normalize();
+    alignAxis.makeRotationFromQuaternion(new THREE.Quaternion().setFromUnitVectors(worldAxis, new THREE.Vector3(0, 1, 0)));
+    spinAxisView.copy(worldAxis);
+    turned.identity();
+    planetDrag.vx = 0;
+    planetDrag.vy = 0;
+    showSurvey();
+    nebulaAge = Infinity;
+  }
+
+  // Hyperspace: every so often, or when the survey readout is clicked or the empty sky
+  // double-clicked, the ships jump away, the stars stretch into streaks down a tunnel of light,
+  // and under a flash the view drops out over another world, with another fleet. Under reduced
+  // motion a click swaps the world at once and nothing jumps on its own.
+  const jump = { active: false, age: 0, swapped: false, next: reduceMotion ? Infinity : 170 + Math.random() * 90 };
+  function beginJump() {
+    if (jump.active) return;
+    if (reduceMotion) {
+      swapWorld();
+      requestFrame();
+      return;
+    }
+    jump.active = true;
+    jump.age = 0;
+    jump.swapped = false;
+    fleet.leave();
+    requestFrame();
+  }
+  function swapWorld() {
+    jump.swapped = true;
+    fleet.dispose();
+    applyWorld(pickWorld({ fresh: true, exclude: world.name }));
+    fleet = createFleet({ scene, camera, time, sunDir, sunColor, air, reduceMotion, overlay: art || hero, anisotropy: renderer.capabilities.getMaxAnisotropy(), random: world.random, scenario: pickScenario(world.random, { fresh: true }) });
+    starPlaced = true;
+    layout();
+    renderer.compile(scene, camera);
+  }
+  const smooth = (edge0, edge1, x) => THREE.MathUtils.smoothstep(x, edge0, edge1);
+  function updateJump(dt) {
+    const hyper = skyUniforms.uHyper.value;
+    if (!jump.active) {
+      hyper.set(0, 1, 0);
+      compositeUniforms.uWhite.value = 0;
+      if (clockTime >= jump.next) beginJump();
+      return;
+    }
+    jump.age += dt;
+    const a = jump.age;
+    if (a < 1.1) {
+      const k = a / 1.1;
+      hyper.set(k * k, 1 - smooth(0.15, 0.75, k), k * k);
+      compositeUniforms.uWhite.value = smooth(0.8, 1.0, k) * 0.85;
+    } else {
+      if (!jump.swapped) swapWorld();
+      const k = Math.min(1, (a - 1.1) / 1.5);
+      hyper.set((1 - k) * (1 - k), smooth(0.3, 1.0, k), (1 - k) * (1 - k));
+      compositeUniforms.uWhite.value = 0.85 * (1 - smooth(0.0, 0.3, k));
+      if (k >= 1) {
+        jump.active = false;
+        jump.next = clockTime + 170 + Math.random() * 90;
+      }
+    }
+    camera.position.x += (Math.random() - 0.5) * hyper.x * 0.05;
+  }
+  survey.addEventListener('click', beginJump);
+  hero.addEventListener('dblclick', (event) => {
+    if (event.target.closest('a, button, input, summary, [role="button"], .r3-survey')) return;
+    const bounds = hero.getBoundingClientRect();
+    const point = { x: event.clientX - bounds.left, y: event.clientY - bounds.top };
+    if (fleet.aimed(point.x, point.y) || overJewel(point) || overPlanet(point)) return;
+    beginJump();
+  });
+  applyWorld(world);
 
   // Every shader is compiled before the first frame, in the background where the browser can
   // (KHR_parallel_shader_compile), so the page never stalls on the planet's large one. The still

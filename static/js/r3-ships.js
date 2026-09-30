@@ -1499,6 +1499,19 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
       drawTrails();
       return flash;
     },
+    // Everything jumps away: capital ships to hyperspace, fighters out of the pass.
+    leave() {
+      for (const visit of visits) {
+        if (visit.state === 'cruising' || visit.state === 'arriving') {
+          visit.start.copy(visit.position);
+          visit.state = 'leaving';
+          visit.age = 0;
+        }
+        visit.until = Infinity;
+      }
+      pass.next = Infinity;
+      if (pass.active) pass.age = Math.max(pass.age, pass.duration);
+    },
     // Takes everything the fleet made out of the scene and the page, freeing it on the GPU.
     dispose() {
       for (const object of owned) {

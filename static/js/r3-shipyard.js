@@ -361,10 +361,10 @@ export const FACTIONS = {
 // An era's two sides.
 const ERAS = [['rebels', 'empire'], ['republic', 'separatists'], ['resistance', 'firstOrder'], ['oldRepublic', 'sith']];
 
-// This load's scenario: one side on patrol, or two sides at war. At war, the capital ships alternate
-// between the sides and the fighters meet in dogfights.
-export function pickScenario(random) {
-  const query = new URLSearchParams(location.search);
+// This load's scenario: one side on patrol, or two sides at war, when the capital ships fight and the
+// fighters meet in dogfights. After a jump the address no longer counts (fresh).
+export function pickScenario(random, { fresh = false } = {}) {
+  const query = new URLSearchParams(fresh ? '' : location.search);
   const eraIndex = ERAS.findIndex(([a, b]) => a === query.get('fleet') || b === query.get('fleet'));
   const era = eraIndex >= 0 ? ERAS[eraIndex] : ERAS[Math.floor(random() * ERAS.length)];
   const war = query.has('war') ? query.get('war') !== '0' : random() < 0.5;

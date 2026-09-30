@@ -121,14 +121,16 @@ function nudge(hex, random, amount) {
   return `#${[rr, gg, bb].map((v) => Math.round((v + m) * 255).toString(16).padStart(2, '0')).join('')}`;
 }
 
-// The world named in the address, or one at random, varied for this load.
-export function pickWorld() {
-  const query = new URLSearchParams(location.search);
-  const asked = query.get('world');
+// The world named in the address, or one at random, varied for this load. After a jump the address
+// no longer counts (fresh), and the world just left is not picked again (exclude).
+export function pickWorld({ fresh = false, exclude = null, name = null } = {}) {
+  const query = new URLSearchParams(fresh ? '' : location.search);
+  const asked = name || query.get('world');
   const seed = Number.parseInt(query.get('seed') || '', 10);
   const random = generator(Number.isFinite(seed) ? seed : Math.floor(Math.random() * 2 ** 32));
   const named = asked ? WORLDS.find((world) => key(world.name) === key(asked)) : null;
-  const base = { ...DEFAULTS, ...(named || WORLDS[Math.floor(random() * WORLDS.length)]) };
+  const choices = WORLDS.filter((world) => world.name !== exclude);
+  const base = { ...DEFAULTS, ...(named || choices[Math.floor(random() * choices.length)]) };
   const spread = (value, amount, low = 0, high = 1) => Math.min(high, Math.max(low, value + (random() * 2 - 1) * amount));
   const within = ([low, high]) => low + (high - low) * random();
   const world = {
@@ -158,11 +160,12 @@ export function pickWorld() {
     // far each spreads and how bright it is, a shift in the violet's hue, and the noise's offset,
     // scale and warp.
     sky: {
-      cyan: [random() * 1.1, 0.7 + 0.55 * random()],
-      violet: [random() * 1.1, -0.35 + 0.6 * random()],
-      third: [random(), random()],
-      spread: [0.45 + 0.5 * random(), 0.4 + 0.5 * random(), 0.3 + 0.45 * random()],
-      strength: [0.5 + 0.9 * random(), 0.4 + 0.9 * random(), random() < 0.5 ? 0.3 + 0.9 * random() : 0],
+      // Centres in the frame or just past its edge, so every cloud always shows.
+      cyan: [0.3 + 0.75 * random(), 0.72 + 0.34 * random()],
+      violet: [-0.05 + 0.75 * random(), -0.15 + 0.4 * random()],
+      third: [0.15 + 0.8 * random(), 0.15 + 0.7 * random()],
+      spread: [0.55 + 0.45 * random(), 0.5 + 0.45 * random(), 0.35 + 0.4 * random()],
+      strength: [0.8 + 0.7 * random(), 0.7 + 0.7 * random(), random() < 0.55 ? 0.4 + 0.8 * random() : 0],
       hue: (random() - 0.5) * 0.12,
       offset: [random() * 40 - 20, random() * 40 - 20],
       scale: 0.75 + 0.6 * random(),
