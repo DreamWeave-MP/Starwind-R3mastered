@@ -13,7 +13,8 @@
 // capital ship holds still in the middle of its crossing and the fighters stay away.
 
 import * as THREE from './vendor/three.module.min.js';
-import { FACTIONS, buildCapital, buildFighter, pickScenario } from './r3-shipyard.js';
+import { ERAS, FACTIONS, buildCapital, buildFighter, pickScenario } from './r3-shipyard.js';
+import { steerScenario } from './r3-memory.js'; // [r3:memory]
 
 // The planet, which the sky draws as a disc, stands behind the ships as a sphere: its front surface
 // is uPlanetDepth.x from the camera at its limb, uPlanetDepth.y nearer at the disc's centre. A
@@ -551,7 +552,7 @@ const SHIELD_FRAGMENT = /* glsl */ `
   }
 `;
 
-export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduceMotion, overlay, anisotropy = 1, random = Math.random, scenario: forcedScenario = null }) {
+export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduceMotion, overlay, anisotropy = 1, random = Math.random, scenario: forcedScenario = null, memory = null }) {
   const [hullMap, detailMap] = hullMaps(anisotropy);
   const planetUniforms = { uPlanetDisc: { value: new THREE.Vector3(-1e5, -1e5, 1) }, uPlanetDepth: { value: new THREE.Vector2(40, 15) } };
   const linear = (hex) => new THREE.Color(hex).convertSRGBToLinear();
@@ -594,8 +595,13 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     side: THREE.DoubleSide,
   });
 
-  const scenario = forcedScenario || pickScenario(random);
-  const sides = scenario.sides.map((key) => ({ key, ...FACTIONS[key] }));
+  // [r3:memory] A navy with a grudge against the viewer, or a side they helped, may be who comes,
+  // unless the address asked for a fleet. Each side knows how it regards the viewer.
+  const picked = forcedScenario || pickScenario(random);
+  const seeded = !!(memory && memory.seeded && !forcedScenario);
+  const steerable = !!forcedScenario || seeded || !new URLSearchParams(location.search).has('fleet');
+  const scenario = steerable ? steerScenario(picked, memory, random, ERAS, { force: seeded }) : picked;
+  const sides = scenario.sides.map((key) => ({ key, ...FACTIONS[key], stance: memory ? memory.stance(key) : null }));
 
   // Running lights: red to port, green to starboard, white strobes on the rest.
   function runningLights(positions) {
@@ -710,7 +716,8 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     for (const kind of side.fighters) {
       if (!fighterDesigns.has(kind)) fighterDesigns.set(kind, buildFighter(kind));
       const design = fighterDesigns.get(kind);
-      pools.set(`${side.key}:${kind}`, [0, 1].map(() => {
+      // [r3:memory] A furious navy flies its fighters in fours.
+      pools.set(`${side.key}:${kind}`, (side.stance === 'furious' ? [0, 1, 2, 3] : [0, 1]).map(() => {
         const material = shipMaterial(side, { windows: 0 });
         const mesh = new THREE.Mesh(design.geometry, material);
         mesh.frustumCulled = false;
@@ -958,6 +965,8 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
       y = THREE.MathUtils.clamp(height * (0.22 + 0.16 * random()), lengthPx * 0.32 + 12, height * 0.55);
       depth = -7 - random() * 4;
     }
+    // [r3:memory] A navy with a grudge drops in nearer.
+    if (side.stance === 'hostile' || side.stance === 'furious') depth = Math.min(-4.5, depth + 1.8);
     worldAt(x, y, depth, visit.start);
     visit.length = lengthPx * perPixelAt(depth);
     visit.cruise = reduceMotion ? 30 : 26 + random() * 12;
@@ -976,6 +985,14 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     const label = scenario.labels ? scenario.labels[sides.indexOf(side)] : ship.labels[Math.floor(random() * ship.labels.length)];
     visit.contact.label.textContent = `${side.name} ▸ ${label}`;
     visit.contact.element.classList.remove('is-lost');
+    // [r3:memory] A navy with a grudge doesn't say who it is; a side the viewer helped does.
+    visit.hostile = side.stance === 'hostile' || side.stance === 'furious';
+    visit.friendly = side.stance === 'friendly';
+    visit.contact.element.classList.toggle('is-hostile', visit.hostile);
+    visit.contact.element.classList.toggle('is-friendly', visit.friendly);
+    if (visit.hostile) visit.contact.label.textContent = `${side.name} ▸ Identification failed`;
+    else if (visit.friendly) visit.contact.label.textContent = `${side.name} ▸ Friendly`;
+    if (visit.hostile) visit.nextVolley = clock + 1.4 + random() * 0.8;
   }
 
   // The fighters' passes: a patrol of one side, at war a dogfight, one side chased by the other, and
@@ -1040,6 +1057,45 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
       fighter.dead = false;
       for (const trail of fighter.trails) trail.samples.length = 0;
     }
+  }
+
+  // [r3:memory] A hostile capital's fighters: out of its hangar, straight at the viewer's jewel
+  // firing, and over the viewer's shoulder. A friendly side's pair: in from behind the viewer, past
+  // the jewel on either side of it, and away ahead.
+  function beginPass(points, duration, flights) {
+    pass.points = points;
+    pass.duration = duration;
+    pass.age = 0;
+    pass.active = true;
+    pass.flights = flights;
+    for (const fighter of allFighters) {
+      fighter.group.visible = false;
+      fighter.dead = false;
+      for (const trail of fighter.trails) trail.samples.length = 0;
+    }
+  }
+  function planAttack(visit) {
+    const { width, height } = view;
+    const target = playerPoint(new THREE.Vector3());
+    const p0 = visit.position.clone().addScaledVector(visit.up, -0.06 * visit.length);
+    const p1 = p0.clone().addScaledVector(visit.up, -0.3 * visit.length).addScaledVector(visit.heading, 0.2 * visit.length);
+    const p2 = target.clone().add(new THREE.Vector3((random() - 0.5) * 1.2, 0.4 + random() * 0.4, -1.5));
+    const home = player.known ? player.x : width * 0.7;
+    const p3 = worldAt(home < width / 2 ? -120 : width + 120, height * (0.2 + 0.5 * random()), 7);
+    beginPass([p0, p1, p2, p3], 3.2 + random() * 0.6, [{ fighters: pairOf(visit.ship.side), delay: 0, chasing: null, attacking: true }]);
+  }
+  function planEscort(side) {
+    const { width, height } = view;
+    const x = player.known ? player.x : width * 0.7;
+    const y = player.known ? player.y : height * 0.3;
+    const from = x > width / 2 ? width + 80 : -80;
+    const points = [
+      worldAt(from, y + height * 0.25, 4.5),
+      worldAt(x + (from > x ? 1 : -1) * 110, y + 26, 1.2),
+      worldAt(x - (from > x ? 1 : -1) * 130, y - 8, -0.8),
+      worldAt(x - (from > x ? 1 : -1) * width * 0.5, y - height * 0.25, -14),
+    ];
+    beginPass(points, 5 + random(), [{ fighters: pairOf(side), delay: 0, chasing: null, escort: true }]);
   }
 
   const flash = { x: 0, y: 0, strength: 0, size: 1, shake: 0 };
@@ -1195,6 +1251,11 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
       fade = Math.min(1, a * 6);
       if (a >= 1) {
         flashAt(localPoint.set(0, 0, 0.5).multiplyScalar(visit.length).applyQuaternion(ship.group.quaternion).add(visit.start), 1.4, 1);
+        // [r3:memory] Hot: it lands hard, and its fighters are out half a second later.
+        if (visit.hostile) {
+          shake = Math.max(shake, 0.45);
+          hostileLaunch = { visit, at: clock + 0.5, count: ship.side.stance === 'furious' ? 2 : 1 };
+        }
         visit.state = 'cruising';
         visit.age = 0;
       }
@@ -1239,7 +1300,8 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
       boost = 1;
       if (l >= 1) {
         visit.state = 'waiting';
-        visit.until = clock + 7 + random() * 9;
+        // [r3:memory] A furious navy comes straight back.
+        visit.until = clock + (ship.side.stance === 'furious' ? 3 + random() * 2 : 7 + random() * 9);
         ship.group.visible = false;
       }
     }
@@ -1260,7 +1322,8 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     // closing in over half a second after it arrives. They are kept, too, to aim at.
     visit.rect = null;
     if (visit.state === 'cruising' || visit.state === 'exploding') {
-      visit.rect = frame(visit.contact, ship.group, ship.design.extremes, visit.state === 'cruising' ? visit.age : 1);
+      // [r3:memory] A hostile contact's brackets snap shut at once.
+      visit.rect = frame(visit.contact, ship.group, ship.design.extremes, visit.state === 'cruising' ? (visit.hostile ? visit.age * 6 : visit.age) : 1);
     } else {
       visit.contact.element.classList.remove('is-locked');
     }
@@ -1275,6 +1338,47 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
       volley(from, to);
       from.nextVolley = clock + 1.3 + random() * 1.1;
     }
+  }
+
+  // [r3:memory] Where the viewer is: the chrome jewel, in hero pixels, set by r3-hero.js; and a
+  // hostile capital on patrol turns its guns on it, a spread that flashes past or splashes on it.
+  const player = { x: -1, y: -1, known: false, point: new THREE.Vector3() };
+  let hostileLaunch = null;
+  const incoming = [];
+  function playerPoint(out) {
+    if (!player.known) return out.set(0, 0, 6);
+    return worldAt(player.x, player.y, 0, out);
+  }
+  function updateHostile() {
+    if (reduceMotion) return;
+    for (const visit of visits) {
+      if (!visit.hostile || visit.state !== 'cruising' || visit.fleeing || atWar() || clock < visit.nextVolley) continue;
+      playerPoint(player.point);
+      const count = 3 + Math.floor(random() * 3);
+      for (let i = 0; i < count; i += 1) {
+        pointOnHull(visit, localPoint, 0.45);
+        aim.copy(player.point).sub(localPoint);
+        const distance = aim.length();
+        if (distance < 1e-3) continue;
+        aim.divideScalar(distance);
+        aim.x += (random() - 0.5) * 0.06;
+        aim.y += (random() - 0.5) * 0.06;
+        aim.normalize();
+        const shot = bolt(localPoint, aim, { speed: 26, length: visit.length * 0.12, life: distance / 26 + 0.4, color: linear(visit.ship.side.laser) });
+        shot.age = -i * 0.12;
+      }
+      incoming.push(clock + distanceTo(visit) / 26 + 0.1);
+      visit.nextVolley = clock + 2.4 + random() * 1.6;
+    }
+    while (incoming.length && clock >= incoming[0]) {
+      incoming.shift();
+      playerPoint(player.point);
+      flashAt(player.point, 0.55, 0.45);
+      shake = Math.max(shake, 0.18);
+    }
+  }
+  function distanceTo(visit) {
+    return playerPoint(player.point).distanceTo(visit.position);
   }
 
   function updateShields(dt) {
@@ -1325,6 +1429,20 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     bolt(start, aim.normalize(), { speed: 48, length: 0.5, life: 0.5, color: linear(fighter.side.laser) });
   }
 
+  // [r3:memory] A fighter's shot at a point: the viewer's jewel, a little off.
+  function fireAt(fighter, point) {
+    fighter.group.updateMatrixWorld(true);
+    const cannons = fighter.design.cannons;
+    const start = localPoint.set(...cannons[fighter.cannon % cannons.length]).applyMatrix4(fighter.group.matrixWorld);
+    fighter.cannon += 1;
+    aim.copy(point).sub(start);
+    if (aim.lengthSq() < 1e-6) return;
+    aim.normalize();
+    aim.x += (random() - 0.5) * 0.08;
+    aim.y += (random() - 0.5) * 0.08;
+    bolt(start, aim.normalize(), { speed: 48, length: 0.5, life: 0.6, color: linear(fighter.side.laser) });
+  }
+
   function updateBolts(dt) {
     const positions = boltGeometry.getAttribute('position');
     const alphas = boltGeometry.getAttribute('aAlpha');
@@ -1354,9 +1472,21 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
 
   const velocities = new Map();
   function updateFighters(dt) {
+    // [r3:memory] A hostile capital's launch cuts in; a friendly side sometimes flies escort.
+    if (hostileLaunch && clock >= hostileLaunch.at && !reduceMotion) {
+      if (hostileLaunch.visit.state === 'cruising') {
+        planAttack(hostileLaunch.visit);
+        hostileLaunch.count -= 1;
+        hostileLaunch = hostileLaunch.count > 0 ? { ...hostileLaunch, at: clock + pass.duration + 0.8 } : null;
+      } else {
+        hostileLaunch = null;
+      }
+    }
     if (!pass.active) {
       for (const fighter of allFighters) fighter.group.visible = false;
-      if (clock >= pass.next) planPass();
+      const friend = sides.find((entry) => entry.stance === 'friendly');
+      if (clock >= pass.next && friend && random() < 0.45) planEscort(friend);
+      else if (clock >= pass.next) planPass();
       else return;
     }
     pass.age += dt;
@@ -1385,6 +1515,9 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
         // The wingman keeps station off the leader's right and a little low; a pursuer weaves.
         const right = new THREE.Vector3().crossVectors(heading, up).normalize();
         if (index === 1) tmp.addScaledVector(right, -0.9).addScaledVector(up, -0.3);
+        // [r3:memory] A flight of four: the second pair off the leader's left, and trailing.
+        else if (index === 2) tmp.addScaledVector(right, 0.9).addScaledVector(up, -0.35);
+        else if (index === 3) tmp.addScaledVector(heading, -1.1).addScaledVector(up, -0.6);
         if (flight.chasing) tmp.addScaledVector(right, 0.35 * Math.sin(clock * 2.2 + index * 2)).addScaledVector(up, 0.25 * Math.cos(clock * 1.7 + index));
         fighter.group.position.copy(tmp);
         fighter.group.scale.setScalar(0.55);
@@ -1396,6 +1529,11 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
         if (!fighter.group.visible) return;
         fighter.group.updateMatrixWorld(true);
         fighter.design.engines.forEach((engine, trailIndex) => trailSample(fighter, trailIndex, localPoint.set(...engine).applyMatrix4(fighter.group.matrixWorld)));
+        // [r3:memory] An attacker fires at the viewer's jewel on the way in.
+        if (flight.attacking && s > 0.18 && s < 0.62 && clock >= fighter.nextShot) {
+          fireAt(fighter, playerPoint(player.point));
+          fighter.nextShot = clock + (fighter.cannon % 4 === 3 ? 0.4 : 0.1);
+        }
         // A pursuer fires in bursts at its quarry while both are well in view.
         if (flight.chasing && s > 0.12 && s < 0.8 && clock >= fighter.nextShot) {
           const quarry = flight.chasing[index % flight.chasing.length];
@@ -1455,6 +1593,10 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     shoot(x, y) {
       const target = targetAt(x, y);
       if (!target) return false;
+      // [r3:memory] Remembered: whose ship it was, and, at war, whom that helped.
+      const struck = target.fighter ? target.fighter.side : target.capital.ship.side;
+      const enemy = scenario.war ? sides.find((entry) => entry !== struck) : null;
+      if (memory) memory.record('kill', { faction: struck.key, capital: !target.fighter, enemy: enemy ? enemy.key : null });
       if (target.fighter) {
         const fighter = target.fighter;
         fighter.dead = true;
@@ -1484,6 +1626,12 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
       }
       if (!pass.active) pass.next = clock + 0.4;
     },
+    // [r3:memory] Where the viewer's jewel is, in hero pixels.
+    player(x, y) {
+      player.x = x;
+      player.y = y;
+      player.known = Number.isFinite(x) && Number.isFinite(y);
+    },
     layout({ width, height, free, narrow, ratio }) {
       Object.assign(view, { width, height, free, narrow, ratio });
       if (reduceMotion) for (const visit of visits) visit.state = 'waiting';
@@ -1506,6 +1654,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
       }
       visits.forEach((visit, index) => updateCapital(visit, dt, index));
       updateBattle();
+      updateHostile(); // [r3:memory]
       updateShields(dt);
       updateFighters(dt);
       updateBolts(dt);

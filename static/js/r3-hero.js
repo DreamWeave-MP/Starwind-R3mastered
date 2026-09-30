@@ -30,6 +30,7 @@ import * as THREE from './vendor/three.module.min.js';
 import { pickWorld, WORLDS } from './r3-worlds.js';
 import { pickVista, placeVista, VISTA_GLSL } from './r3-vistas.js';
 import { createFleet } from './r3-ships.js';
+import { createMemory } from './r3-memory.js'; // [r3:memory]
 import { pickScenario } from './r3-shipyard.js';
 
 const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -1069,7 +1070,10 @@ function start(hero, art) {
     side: THREE.DoubleSide,
   }));
   pivot.add(jewel);
-  let fleet = createFleet({ scene, camera, time, sunDir, sunColor, air, reduceMotion, overlay: art || hero, anisotropy: renderer.capabilities.getMaxAnisotropy(), random: world.random });
+  // [r3:memory] What the viewer has done this session, which the fleets remember.
+  const memory = createMemory();
+  memory.record('survey', { world: world.name });
+  let fleet = createFleet({ scene, camera, time, sunDir, sunColor, air, reduceMotion, overlay: art || hero, anisotropy: renderer.capabilities.getMaxAnisotropy(), random: world.random, memory });
 
   const brightMaterial = fullscreenMaterial(BRIGHT_FRAGMENT, { tInput: { value: sceneTarget.texture }, uThreshold: { value: 1.1 } });
   const blurMaterial = fullscreenMaterial(BLUR_FRAGMENT, { tInput: { value: null }, uDirection: { value: new THREE.Vector2() } });
@@ -1666,6 +1670,7 @@ function start(hero, art) {
     // The ships, and any hyperspace flash they make. They hide behind the planet where the sky
     // draws it.
     fleet.planet((planet.x - drift.value.x * 26) * ratio, (planet.y - drift.value.y * 26) * ratio, planet.radius * ratio);
+    fleet.player(jewelPx.x, jewelPx.y); // [r3:memory]
     const shipFlash = fleet.update(reduceMotion ? 0 : dt);
     // An explosion shakes the camera for a moment.
     if (shipFlash.shake > 0) {
@@ -1852,7 +1857,10 @@ function start(hero, art) {
       jump.warm = null;
       requestAnimationFrame(() => warm.material.dispose());
     }
-    fleet = createFleet({ scene, camera, time, sunDir, sunColor, air, reduceMotion, overlay: art || hero, anisotropy: renderer.capabilities.getMaxAnisotropy(), random: world.random, scenario: pickScenario(world.random, { fresh: true }) });
+    // [r3:memory] The jump and the new world are remembered before the new fleet reads the memory.
+    memory.record('jump');
+    memory.record('survey', { world: world.name });
+    fleet = createFleet({ scene, camera, time, sunDir, sunColor, air, reduceMotion, overlay: art || hero, anisotropy: renderer.capabilities.getMaxAnisotropy(), random: world.random, scenario: pickScenario(world.random, { fresh: true }), memory });
     if (vista.kind === 'heatDeath') fleet.leave();
     starPlaced = true;
     layout();
