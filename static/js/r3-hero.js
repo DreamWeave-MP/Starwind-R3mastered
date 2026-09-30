@@ -875,9 +875,40 @@ const BLUR_FRAGMENT = /* glsl */ `
   }
 `;
 
+// How much of each sun shows: sixteen taps over its disc in the scene's depth, where anything nearer
+// than the sun (a ship, the jewel) covers it. The sky writes no depth, so a sun's depth is the far
+// plane until the sky draws its bodies at depths of their own; then uSunDepth and uSun2Depth carry
+// each sun's. One texel per sun, drawn once a frame, so the composite reads it instead of sampling
+// the disc at every pixel. A tap off the stage counts as open sky.
+const VISIBILITY_FRAGMENT = /* glsl */ `
+  uniform sampler2D tDepth;
+  uniform vec2 uSize;        // the scene target, device pixels
+  uniform vec3 uSunDisc;     // centre and radius, device pixels, y up
+  uniform vec3 uSun2Disc;
+  uniform float uSunDepth;   // each sun's depth, 0 to 1 as the depth buffer holds it
+  uniform float uSun2Depth;
+  varying vec2 vUv;
+  float shown(vec3 disc, float depth) {
+    float open = 0.0;
+    for (int i = 0; i < 16; i++) {
+      float k = float(i) + 0.5;
+      float r = sqrt(k / 16.0) * max(disc.z, 1.0);
+      float a = k * 2.39996323;
+      vec2 at = (disc.xy + vec2(cos(a), sin(a)) * r) / uSize;
+      bool inside = at.x >= 0.0 && at.x <= 1.0 && at.y >= 0.0 && at.y <= 1.0;
+      open += inside && texture2D(tDepth, at).r < depth - 1e-5 ? 0.0 : 1.0;
+    }
+    return open / 16.0;
+  }
+  void main() {
+    gl_FragColor = vec4(vUv.x < 0.5 ? shown(uSunDisc, uSunDepth) : shown(uSun2Disc, uSun2Depth), 0.0, 0.0, 1.0);
+  }
+`;
+
 // The sun's flare is a lens effect, so it lies over everything, the planet and the jewel included:
 // the four spikes of the mark, a long anamorphic streak along the horizon, and a halo. A second,
-// smaller star glints on the jewel's tip when it spins.
+// smaller star glints on the jewel's tip when it spins. A flare is as strong as its sun is seen: a
+// ship across the sun puts it out, and over a hull nearer than the sun only a little of it spills.
 const COMPOSITE_FRAGMENT = /* glsl */ `
   uniform sampler2D tScene;
   uniform sampler2D tBloomNear;
@@ -889,6 +920,10 @@ const COMPOSITE_FRAGMENT = /* glsl */ `
   uniform float uSunShow;
   uniform vec2 uSun2Px;      // a second sun, on twin-sun worlds
   uniform float uSun2Show;
+  uniform sampler2D tVisibility;  // how much of each sun is uncovered: texel 0 the sun, 1 the second
+  uniform sampler2D tDepth;       // the scene's depth, for what stands in front of the suns
+  uniform float uSunDepth;
+  uniform float uSun2Depth;
   uniform vec3 uSunColor;
   uniform vec3 uAccent;
   uniform vec2 uGlintPx;
@@ -935,11 +970,16 @@ const COMPOSITE_FRAGMENT = /* glsl */ `
     float ring = exp(-pow(abs(length(d) - 64.0) / 5.0, 2.0)) * 0.04;
     vec3 flare = uSunColor * (sun.x * 0.9 + sun.y * 1.6 + wide.x * 0.12 + wide.y * 0.22) + mix(uAccent, uSunColor, 0.4) * (streak * 0.22 + ring);
     float overPlanet = 1.0 - smoothstep(uPlanetPx.z - 2.0, uPlanetPx.z + 2.0, length(gl_FragCoord.xy - uPlanetPx.xy));
-    color += flare * uSunShow * (1.0 - 0.65 * overPlanet) * (1.0 - 0.7 * uSensor);
+    float seen = clamp(scrub(vec3(texture2D(tVisibility, vec2(0.25, 0.5)).r)).x, 0.0, 1.0);
+    float seen2 = clamp(scrub(vec3(texture2D(tVisibility, vec2(0.75, 0.5)).r)).x, 0.0, 1.0);
+    float depthHere = texture2D(tDepth, vUv).r;
+    float overShip = depthHere < uSunDepth - 1e-5 ? 0.3 : 1.0;
+    float overShip2 = depthHere < uSun2Depth - 1e-5 ? 0.3 : 1.0;
+    color += flare * uSunShow * seen * overShip * (1.0 - 0.65 * overPlanet) * (1.0 - 0.7 * uSensor);
     vec2 d2 = (gl_FragCoord.xy - uSun2Px) / uRatio;
     vec3 second = fourPoint(d2, 30.0, 0.9, 3.0);
     vec3 secondWide = fourPoint(d2, 14.0, 3.0, 14.0);
-    color += vec3(1.0, 0.78, 0.55) * (second.x * 0.8 + second.y * 1.4 + secondWide.y * 0.25) * uSun2Show * (1.0 - 0.65 * overPlanet);
+    color += vec3(1.0, 0.78, 0.55) * (second.x * 0.8 + second.y * 1.4 + secondWide.y * 0.25) * uSun2Show * seen2 * overShip2 * (1.0 - 0.65 * overPlanet);
 
     // A ship entering or leaving hyperspace: a hard white star, a halo and a ring blown outward.
     vec2 fd = (gl_FragCoord.xy - uFlashPx) / (uRatio * max(uFlashSize, 0.1));
@@ -1065,10 +1105,13 @@ function start(hero, art) {
   const targetType = floatTargets ? THREE.HalfFloatType : THREE.UnsignedByteType;
   const makeTarget = () => new THREE.WebGLRenderTarget(1, 1, { type: targetType, depthBuffer: false });
   const sceneTarget = new THREE.WebGLRenderTarget(1, 1, { type: targetType, samples: 4 });
+  sceneTarget.depthTexture = new THREE.DepthTexture(1, 1); // [r3:flare] what stands in front of the suns
   // [r3:orbit] The nebulae, on a cube round the viewer (NEBULA_FRAGMENT): smaller on a small screen.
   const nebulaSize = Math.min(window.innerWidth, window.innerHeight) < 600 ? 256 : 512;
   const nebulaCube = new THREE.WebGLCubeRenderTarget(nebulaSize, { type: targetType, depthBuffer: false, generateMipmaps: false, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter });
   const bloomTargets = [makeTarget(), makeTarget(), makeTarget(), makeTarget()];
+  // [r3:flare] One texel per sun: how much of it is uncovered.
+  const visibilityTarget = new THREE.WebGLRenderTarget(2, 1, { type: targetType, depthBuffer: false, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter });
 
   // Palette, from the site's tokens.
   const accent = token('--dw-accent', '#7ae0e2');
@@ -1289,8 +1332,26 @@ function start(hero, art) {
     varying vec2 vUv;
     void main() { gl_FragColor = texture2D(tInput, vUv); }
   `, { tInput: { value: null } });
+  // [r3:flare] Each sun's disc in the scene target, device pixels, y up, and its depth, far until the
+  // sky draws its bodies at depths of their own.
+  const sunDepth = { value: 1 };
+  const sun2Depth = { value: 1 };
+  const visibilityMaterial = fullscreenMaterial(VISIBILITY_FRAGMENT, {
+    tDepth: { value: sceneTarget.depthTexture },
+    uSize: { value: new THREE.Vector2(1, 1) },
+    uSunDisc: { value: new THREE.Vector3(-1e5, -1e5, 1) },
+    uSun2Disc: { value: new THREE.Vector3(-1e5, -1e5, 1) },
+    uSunDepth: sunDepth,
+    uSun2Depth: sun2Depth,
+  });
+  let sunReach = 6;
+  let sun2Reach = 5;
   const compositeUniforms = {
     tScene: { value: sceneTarget.texture },
+    tVisibility: { value: visibilityTarget.texture }, // [r3:flare]
+    tDepth: { value: sceneTarget.depthTexture }, // [r3:flare]
+    uSunDepth: sunDepth, // [r3:flare]
+    uSun2Depth: sun2Depth, // [r3:flare]
     tBloomNear: { value: bloomTargets[0].texture },
     tBloomFar: { value: bloomTargets[2].texture },
     uTime: time,
@@ -1400,6 +1461,7 @@ function start(hero, art) {
     const w = Math.round(width * ratio);
     const h = Math.round(height * ratio);
     sceneTarget.setSize(w, h);
+    visibilityMaterial.uniforms.uSize.value.set(w, h); // [r3:flare]
     bloomTargets[0].setSize(Math.max(1, w >> 2), Math.max(1, h >> 2));
     bloomTargets[1].setSize(Math.max(1, w >> 2), Math.max(1, h >> 2));
     bloomTargets[2].setSize(Math.max(1, w >> 3), Math.max(1, h >> 3));
@@ -1795,6 +1857,15 @@ function start(hero, art) {
     }
     return true;
   }
+  // [r3:flare] The depth the scene holds just in front of a body of the sky's frame, reach nearer
+  // than its centre: where anything nearer covers its light.
+  function depthBefore(body, reach) {
+    skyToWorld(body, bodyAt).sub(camera.position);
+    const distance = bodyAt.length();
+    if (distance - reach <= camera.near) return 0;
+    bodyAt.multiplyScalar((distance - reach) / distance).add(camera.position).project(camera);
+    return THREE.MathUtils.clamp(bodyAt.z * 0.5 + 0.5, 0, 1);
+  }
   // How much of a sun in this direction (the sky's frame) the planet leaves in view.
   function sunClear(direction) {
     const b = skyEye.dot(direction);
@@ -1914,6 +1985,12 @@ function start(hero, art) {
         const at = onStage(skyToWorld(moon, bodyAt), stagePoint);
         shown.set(at.x, at.y, at.z > 0 ? (moon.w / (at.z * lens.pxTan)) * ratio : 0, shown.w);
       }
+      // [r3:flare] The limb suns are points of light: a small disc each, for what covers them, and
+      // [r3:orbit] far beyond everything, the planet included, which covers them by its own depth.
+      sunReach = 6;
+      sun2Reach = 5;
+      sunDepth.value = 1;
+      sun2Depth.value = 1;
       environment.place(null); // [r3:environment]
     } else {
       // Another backdrop: its bodies placed for this moment, stood up in three dimensions, and its
@@ -1949,7 +2026,8 @@ function start(hero, art) {
       sky.uDying.value = dying;
       nebulaMaterial.uniforms.uFade.value = dying;
       if (vista.kind === 'heatDeath' && vista.bang && t - vista.bang.born > 3.2) beginJump();
-      // The light: the main body, lighting the ships from where it stands; its flare where it shows.
+      // The light: the main body (a binary's giant), lighting the ships from where it stands; its
+      // flare where it shows.
       skyToWorld(lift.light, bodyAt);
       sunDir.value.copy(bodyAt).normalize();
       const shown = onStage(bodyAt, stagePoint);
@@ -1961,7 +2039,19 @@ function start(hero, art) {
       // a binary's two lights.
       placed.light = [shown.x / ratio, height - shown.y / ratio];
       placeShown(placed.a, lift.a, shown.z > 0);
+      // [r3:flare] Each flare is measured over its own star's disc, so a ship crossing the star
+      // puts it out; [r3:orbit] against the depth of the star's near side, which the sky writes.
+      const bodyReach = placed.a[2] / ratio;
+      sunReach = { star: 36, dwarf: bodyReach, system: bodyReach, blackHole: bodyReach * 2.5, quasar: bodyReach * 2.5 }[vista.kind] || 5;
+      const hole = vista.kind === 'blackHole' || vista.kind === 'quasar';
+      sunDepth.value = depthBefore(lift.a, hole ? lift.a.w * 12 : lift.a.w);
       if (vista.kind === 'binary') {
+        // The companion flares too, where it stands, and goes out behind the giant.
+        const second = onStage(skyToWorld(lift.b, bodyAt), stagePoint);
+        compositeUniforms.uSun2Px.value.set(second.x, second.y);
+        compositeUniforms.uSun2Show.value = second.z > 0 ? 0.3 : 0;
+        sun2Reach = Math.max(3, lift.b.w / (Math.max(second.z, 1e-3) * lens.pxTan));
+        sun2Depth.value = depthBefore(lift.b, lift.b.w);
         placeShown(placed.b, lift.b, true);
         placed.dirA = skyToWorld(lift.a, new THREE.Vector3()).normalize();
         placed.dirB = skyToWorld(lift.b, new THREE.Vector3()).normalize();
@@ -2119,6 +2209,10 @@ function start(hero, art) {
     renderer.clear();
     pass(skyMaterial, sceneTarget);
     renderer.render(scene, camera);
+    // [r3:flare] How much of each sun the ships leave in view, for its flare.
+    visibilityMaterial.uniforms.uSunDisc.value.set(compositeUniforms.uSunPx.value.x, compositeUniforms.uSunPx.value.y, sunReach * ratio);
+    visibilityMaterial.uniforms.uSun2Disc.value.set(compositeUniforms.uSun2Px.value.x, compositeUniforms.uSun2Px.value.y, sun2Reach * ratio);
+    pass(visibilityMaterial, visibilityTarget);
 
     brightMaterial.uniforms.tInput.value = sceneTarget.texture;
     pass(brightMaterial, bloomTargets[0]);
@@ -2455,7 +2549,7 @@ function start(hero, art) {
   // stays up meanwhile.
   let compiled = false;
   const warm = new THREE.Scene();
-  for (const material of [nebulaMaterial, skyMaterial, brightMaterial, blurMaterial, copyMaterial, compositeMaterial]) {
+  for (const material of [nebulaMaterial, skyMaterial, brightMaterial, blurMaterial, copyMaterial, visibilityMaterial, compositeMaterial]) {
     const mesh = new THREE.Mesh(postQuad.geometry, material);
     mesh.frustumCulled = false;
     warm.add(mesh);
