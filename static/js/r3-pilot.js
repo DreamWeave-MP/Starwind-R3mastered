@@ -236,7 +236,8 @@ export function createPilot({ hero, scene, camera, getFleet, jewelPx, starVeloci
     const margin = jewelPx.radius * 1.25;
     let ax = 0;
     let ay = 0;
-    if (jumping()) {
+    // On a phone the vanishing point lies over the text, so there the jewel does not lead the jump.
+    if (jumping() && width >= 761) {
       // Leading the jump: to the vanishing point, and held there while the tunnel runs.
       if (!home.saved) {
         home.x = jewelPx.x;
