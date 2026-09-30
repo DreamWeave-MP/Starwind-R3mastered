@@ -585,10 +585,12 @@ export function createDirector({ kit, fleet = null, memory = null, random = kit.
         const hawk = spawn({
           key: 'ebonHawk', side: HAWK, length: (view.narrow ? 70 : 130) * plan.perPx,
           position: toWorld(direction < 0 ? plan.x1 : plan.x0, plan.y, plan.depth), velocity, heading: velocity.clone().setZ(0.2), windows: 0,
+          up: new THREE.Vector3(0, 1, 0.9),
           label: 'Ebon Hawk ▸ Dynamic-class freighter · 24 m', contactClass: 'r3-contact--civil', hp: 6,
           think(actor) {
             actor.velocity.y = Math.sin(now() * 2.3) * 0.28 + Math.sin(now() * 5.1) * 0.08;
-            orient(actor.group, actor.velocity.clone().setZ(0.2), new THREE.Vector3(Math.sin(now() * 2.3) * 0.5, 1, 0));
+            // A flat freighter, banked and turned to show its back, its prongs, to the viewer.
+            orient(actor.group, actor.velocity.clone().setZ(0.2), new THREE.Vector3(Math.sin(now() * 2.3) * 0.5, 1, 0.9));
             const chaser = pursuers.find((one) => !one.dead && !one.gone && one.state === 'present');
             if (chaser && actor.state === 'present' && now() >= (actor.data.nextShot || 0)) {
               actor.data.nextShot = now() + 0.6 + random() * 0.5;
