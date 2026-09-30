@@ -630,7 +630,9 @@ const SHIELD_FRAGMENT = /* glsl */ `
   }
 `;
 
-export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduceMotion, overlay, anisotropy = 1, random = Math.random, scenario: forcedScenario = null, memory = null }) {
+export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduceMotion, overlay, anisotropy = 1, random = Math.random, scenario: forcedScenario = null, memory = null, fresh = false }) {
+  // [r3:chart] ?ship= and ?pass= pick for the fleet the page opened with, not for every fleet after a jump.
+  const address = new URLSearchParams(fresh ? '' : location.search);
   const [hullMap, detailMap] = hullMaps(anisotropy);
   const planetUniforms = { uPlanetDisc: { value: new THREE.Vector3(-1e5, -1e5, 1) }, uPlanetDepth: { value: new THREE.Vector2(40, 15) } };
   const linear = (hex) => new THREE.Color(hex).convertSRGBToLinear();
@@ -1083,7 +1085,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     const { width, height, free, narrow } = view;
     const war = atWar();
     // ?ship=organicCruiser asks for a hull by name, where a side flies one.
-    const asked = capitals.filter((entry) => entry.kind === new URLSearchParams(location.search).get('ship'));
+    const asked = capitals.filter((entry) => entry.kind === address.get('ship')); // [r3:chart] address
     const side = war ? sides[visit.slot] : (asked.length ? asked[0].side : sides[visitCount % sides.length]);
     visitCount += 1;
     const busy = visits.filter((other) => other !== visit && other.state !== 'waiting').map((other) => other.ship);
@@ -1160,10 +1162,11 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     const cruising = visits.filter((visit) => visit.state === 'cruising' && visit.ship && visit.systems.hangar === 0); // [r3:gunnery] a hit hangar launches nothing
     // ?pass=dive, climb, cross or launch picks the path, for screenshots.
     const kinds = ['dive', 'climb', 'cross', 'launch'];
-    const asked = kinds.indexOf(new URLSearchParams(location.search).get('pass'));
+    const asked = kinds.indexOf(address.get('pass')); // [r3:chart] address
     let kind = asked >= 0 ? asked : Math.floor(random() * 3);
     if (asked < 0 && cruising.length && random() < 0.45) kind = 3;
     if (kind === 3 && !cruising.length) kind = 2;
+    pass.kind = kind; // [r3:chart] for a permalink of the pass in flight
     let leaders = scenario.war && random() < 0.7 ? sides[Math.floor(random() * sides.length)] : sides[0];
     if (kind === 3) {
       // A launch: out of the hangar under a capital ship's hull, dropping clear and turning out
