@@ -1102,6 +1102,9 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
       y = THREE.MathUtils.clamp(height * (0.22 + 0.16 * random()), lengthPx * 0.32 + 12, height * 0.55);
       depth = -7 - random() * 4;
     }
+    // [r3:lore] A hydrostatic bubble, and the flat hull tilted inside it, stands taller than a hull:
+    // keep half the length clear above it.
+    if (side.shield === 'bubble') y = Math.max(y, lengthPx * 0.5 + 12);
     // [r3:memory] A navy with a grudge drops in nearer.
     if (side.stance === 'hostile' || side.stance === 'furious') depth = Math.min(-4.5, depth + 1.8);
     worldAt(x, y, depth, visit.start);
