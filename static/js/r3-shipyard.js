@@ -114,12 +114,12 @@ function wedge(random, { half: W = 0.38, towers = 1 } = {}) {
   box(0.15 * k, 0.04, 0.15, 0, 0.165, -0.43, 3);
   box(0.36 * k, 0.02, 0.06, 0, 0.1, -0.24, 1);
   // The command tower, or two side by side.
-  const towerAt = towers === 2 ? [-0.052, 0.052] : [0];
-  const bar = towers === 2 ? 0.09 : 0.21;
+  const towerAt = towers === 2 ? [-0.075, 0.075] : [0];
+  const bar = towers === 2 ? 0.08 : 0.21;
   for (const tx of towerAt) {
     box(0.04, 0.07, 0.05, tx, 0.215, -0.44, 1);
     box(bar, 0.028, 0.055, tx, 0.26, -0.44, 3);
-    for (const dx of towers === 2 ? [-0.03, 0.03] : [-0.07, 0.07]) parts.push({ geometry: new THREE.SphereGeometry(towers === 2 ? 0.014 : 0.02, 12, 10), matrix: at(tx + dx, 0.285, -0.44), kind: 1 });
+    for (const dx of towers === 2 ? [-0.028, 0.028] : [-0.07, 0.07]) parts.push({ geometry: new THREE.SphereGeometry(towers === 2 ? 0.014 : 0.02, 12, 10), matrix: at(tx + dx, 0.285, -0.44), kind: 1 });
   }
   box(0.004, 0.05, 0.004, towerAt[0] + 0.03, 0.3, -0.45, 1);
   box(0.003, 0.035, 0.003, towerAt[towerAt.length - 1] - 0.025, 0.29, -0.45, 1);

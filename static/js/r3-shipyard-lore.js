@@ -60,8 +60,7 @@ const sphere = (radius, x, y, z, kind, segments = 20) => ({ geometry: new THREE.
 // stand on the two hulls' flanks.
 export function interdictor(random) {
   const parts = [];
-  const blade = (y, noseY, half, ridge, belly) => {
-    const t = 0.011;
+  const blade = (y, noseY, half, ridge, belly, t = 0.011) => {
     const nose = [0, noseY + t * 0.5, 0.5];
     const keel = [0, noseY - t * 0.5, 0.5];
     const leftTop = [-half, y + t, -0.5];
@@ -81,8 +80,17 @@ export function interdictor(random) {
     ], new THREE.Vector3(0, y, -0.17));
   };
   // The split: the dorsal blade rises toward the bow and the ventral one falls, like a jaw.
-  parts.push({ geometry: blade(0.05, 0.11, 0.27, 0.055, 0.012), kind: 0 });
-  parts.push({ geometry: blade(-0.05, -0.1, 0.23, 0.012, 0.045), kind: 0 });
+  const upper = { y: 0.05, noseY: 0.11, half: 0.27, ridge: 0.055, belly: 0.012, t: 0.011 };
+  const lower = { y: -0.05, noseY: -0.1, half: 0.23, ridge: 0.024, belly: 0.05, t: 0.018 };
+  for (const b of [upper, lower]) parts.push({ geometry: blade(b.y, b.noseY, b.half, b.ridge, b.belly, b.t), kind: 0 });
+  // A point on a blade's outer face (the upper's top, the lower's bottom), at x across and z along.
+  const surface = (b, x, z, top) => {
+    const u = THREE.MathUtils.clamp(0.5 - z, 0, 1);
+    const tip = b.noseY + (top ? b.t * 0.5 : -b.t * 0.5);
+    const centre = tip + ((top ? b.y + b.ridge : b.y - b.belly) - tip) * u;
+    const edge = tip + ((top ? b.y + b.t : b.y - b.t) - tip) * u;
+    return centre + (edge - centre) * Math.min(1, Math.abs(x) / Math.max(b.half * u, 1e-3));
+  };
   const box = (w, h, d, x, y, z, kind) => parts.push({ geometry: new THREE.BoxGeometry(w, h, d), matrix: at(x, y, z), kind });
   // The stern block that joins them, and the command tower on it.
   box(0.3, 0.15, 0.17, 0, 0, -0.43, 3);
@@ -94,19 +102,19 @@ export function interdictor(random) {
   // A red spine down the dorsal blade.
   box(0.018, 0.012, 0.62, 0, 0.078, -0.12, 6);
   // Four gravity-well projectors.
-  for (const [x, y] of [[-0.12, 0.074], [0.12, 0.074], [-0.1, -0.078], [0.1, -0.078]]) {
+  for (const [x, y] of [[-0.12, surface(upper, 0.12, -0.16, true) + 0.01], [0.12, surface(upper, 0.12, -0.16, true) + 0.01], [-0.1, surface(lower, 0.1, -0.16, false) - 0.01], [0.1, surface(lower, 0.1, -0.16, false) - 0.01]]) {
     parts.push(sphere(0.042, x, y, -0.16, 1, 24));
     parts.push({ geometry: new THREE.TorusGeometry(0.046, 0.006, 8, 32), matrix: at(x, y, -0.16).multiply(new THREE.Matrix4().makeRotationX(Math.PI / 2)), kind: 1 });
   }
   // Guns and plating along both blades.
   for (let i = 0; i < 70; i++) {
     const z = 0.3 - Math.pow(random(), 0.8) * 0.72;
-    const upper = random() < 0.6;
-    const half = (upper ? 0.27 : 0.23) * (0.5 - z) * 0.8;
-    const x = (random() * 2 - 1) * half;
+    const top = random() < 0.6;
+    const b = top ? upper : lower;
+    const x = (random() * 2 - 1) * b.half * (0.5 - z) * 0.8;
     const w = 0.006 + random() * 0.018;
     const h = 0.003 + random() * 0.006;
-    box(w, h, 0.008 + random() * 0.03, x, upper ? 0.05 + 0.03 * (0.5 - z) + h / 2 : -0.05 - 0.025 * (0.5 - z) - h / 2, z, 1);
+    box(w, h, 0.008 + random() * 0.03, x, surface(b, x, z, top) + (top ? h / 2 : -h / 2), z, 1);
   }
   // Three main thrusters and four auxiliaries.
   for (const x of [-0.1, 0, 0.1]) {
@@ -173,7 +181,7 @@ export function warBongo(random) {
   const fins = [[0.14, 0.3], [0.3, 0.12], [0.41, -0.06], [0.43, -0.15], [0.33, -0.17], [0.2, -0.2], [0.1, -0.27], [0, -0.29]];
   parts.push({ geometry: planform(fins, { nose: 0.36, depth: 0.012, bevel: 0.012 }), matrix: at(0, -0.012, 0), kind: 0 });
   // The driving plane at the bow, painted in the army's red.
-  parts.push({ geometry: planform([[0.07, 0.5], [0.13, 0.465], [0.12, 0.42], [0.05, 0.4], [0, 0.4]], { nose: 0.51, depth: 0.008, bevel: 0.008 }), matrix: at(0, -0.035, 0), kind: 6 });
+  parts.push({ geometry: planform([[0.05, 0.515], [0.12, 0.47], [0.11, 0.41], [0.04, 0.385], [0, 0.38]], { nose: 0.53, depth: 0.008, bevel: 0.008 }), matrix: at(0, -0.006, 0), kind: 6 });
   // The tribubble bridge.
   parts.push(sphere(0.055, 0, 0.095, 0.3, 9, 28));
   parts.push(sphere(0.04, -0.072, 0.075, 0.26, 9, 24));
@@ -261,11 +269,24 @@ export function sithFighter() {
   for (const side of [-1, 1]) {
     // A wing folded out and down from the carriage's side, with a red leading edge.
     const droop = turnZ(side * -0.42);
-    parts.push({ geometry: new THREE.BoxGeometry(0.34, 0.014, 0.3), matrix: droop.clone().multiply(at(side * 0.25, 0, -0.03)), kind: 0 });
-    parts.push({ geometry: new THREE.BoxGeometry(0.34, 0.018, 0.03), matrix: droop.clone().multiply(at(side * 0.25, 0.002, 0.12)), kind: 6 });
-    parts.push({ geometry: new THREE.CylinderGeometry(0.012, 0.014, 0.26, 10), matrix: droop.clone().multiply(at(side * 0.42, 0, 0.06)).multiply(along), kind: 1 });
-    const tip = new THREE.Vector3(side * 0.42, 0, 0.19).applyMatrix4(droop);
-    cannons.push([tip.x, tip.y, tip.z]);
+    const root = side * 0.08;
+    const tip = side * 0.42;
+    const h = 0.007;
+    const wing = hull([
+      [[root, h, 0.12], [tip, h, 0.07], [tip, h, -0.1]], [[root, h, 0.12], [tip, h, -0.1], [root, h, -0.18]],
+      [[root, -h, 0.12], [tip, -h, -0.1], [tip, -h, 0.07]], [[root, -h, 0.12], [root, -h, -0.18], [tip, -h, -0.1]],
+      [[root, h, 0.12], [root, -h, 0.12], [tip, -h, 0.07]], [[root, h, 0.12], [tip, -h, 0.07], [tip, h, 0.07]],
+      [[tip, h, 0.07], [tip, -h, 0.07], [tip, -h, -0.1]], [[tip, h, 0.07], [tip, -h, -0.1], [tip, h, -0.1]],
+      [[tip, h, -0.1], [tip, -h, -0.1], [root, -h, -0.18]], [[tip, h, -0.1], [root, -h, -0.18], [root, h, -0.18]],
+      [[root, h, -0.18], [root, -h, -0.18], [root, -h, 0.12]], [[root, h, -0.18], [root, -h, 0.12], [root, h, 0.12]],
+    ], new THREE.Vector3(side * 0.25, 0, -0.03));
+    parts.push({ geometry: wing, matrix: droop, kind: 0 });
+    // The red leading edge, along the wing's front from root to tip.
+    const edge = new THREE.Vector3(tip - root, 0, 0.07 - 0.12);
+    parts.push({ geometry: new THREE.BoxGeometry(edge.length(), 0.016, 0.022), matrix: droop.clone().multiply(at((root + tip) / 2, 0.001, 0.095)).multiply(turnY(-Math.atan2(edge.z, edge.x))), kind: 6 });
+    parts.push({ geometry: new THREE.CylinderGeometry(0.012, 0.014, 0.26, 10), matrix: droop.clone().multiply(at(tip, 0, 0.06)).multiply(along), kind: 1 });
+    const muzzle = new THREE.Vector3(tip, 0, 0.19).applyMatrix4(droop);
+    cannons.push([muzzle.x, muzzle.y, muzzle.z]);
     parts.push({ geometry: new THREE.CylinderGeometry(0.03, 0.034, 0.12, 14), matrix: at(side * 0.05, -0.01, -0.2).multiply(along), kind: 1 });
     parts.push({ geometry: new THREE.CircleGeometry(0.026, 14), matrix: at(side * 0.05, -0.01, -0.2605).multiply(facingBack), kind: 2 });
   }
