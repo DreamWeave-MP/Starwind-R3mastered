@@ -35,6 +35,7 @@ import { createDirector } from './r3-events.js'; // [r3:director]
 import { createEnvironment } from './r3-environment.js'; // [r3:environment]
 import { pickScenario } from './r3-shipyard.js';
 import { decorateSurvey } from './r3-guide.js'; // [r3:guide]
+import { createOrbit } from './r3-camera.js'; // [r3:navigator]
 
 const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -1002,7 +1003,7 @@ function start(hero, art) {
     uDrift: drift,
     uScroll: scroll,
     uPlanet: { value: new THREE.Vector3(0, 0, 100) },
-    uSunDir: sunDir,
+    uSunDir: { value: new THREE.Vector3(0, 0, -1) }, // [r3:navigator] view space: the orbit turns it
     uSunColor: { value: sunColor },
     uBody: { value: new THREE.Matrix3() },
     uCloudBody: { value: new THREE.Matrix3() },
@@ -1463,6 +1464,21 @@ function start(hero, art) {
   hero.addEventListener('pointerup', releasePlanet, { passive: true });
   hero.addEventListener('pointercancel', releasePlanet, { passive: true });
 
+  // [r3:navigator] Dragging empty sky orbits the view about the planet (r3-camera.js): only a
+  // press that nothing else took, off the text, the jewel, the planet, the ships and the worlds.
+  const orbit = createOrbit({
+    hero,
+    reduceMotion,
+    onMove: () => { if (reduceMotion) requestFrame(); },
+    isFree: (point, event) => !event.r3Taken && !planetDrag.active && forArt(event, point) && !overText(point)
+      && !overJewel(point) && !overPlanet(point) && !fleet.aimed(point.x, point.y) && !systemWorldAt(point)
+      && !event.target.closest(interactive) && !event.target.closest('.r3-survey'),
+  });
+  const orbitFocus = new THREE.Vector3();
+  const orbitPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+  const orbitNdc = new THREE.Vector2();
+  const orbitSun = new THREE.Vector3();
+
   let spinBase = 0;
   // Sparkles: now and then one of the four points flashes, and the top one always does in a spin.
   let sparkleTip = 0;
@@ -1524,6 +1540,13 @@ function start(hero, art) {
     // The orbit: the sky streams to the left and a little down, the far stars at six pixels a
     // second. It wraps at a large period so the numbers stay small.
     scroll.value.set((t * 6.0) % 100000, (t * 1.1) % 100000);
+    // [r3:navigator] Turning the view pans the stars and clouds a hero's width per field of view.
+    orbit.update(reduceMotion ? 0 : dt);
+    if (orbit.turned) {
+      const across = width / Math.max(0.2, 2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * camera.aspect));
+      scroll.value.x -= orbit.state.yaw * across;
+      scroll.value.y += orbit.state.pitch * across;
+    }
 
     // The sun rises and sinks on the limb over about ninety seconds: a diamond ring at its lowest.
     const rise = 0.5 + 0.5 * Math.sin(t * 0.07 - 0.6);
@@ -1547,10 +1570,10 @@ function start(hero, art) {
       }
     }
     dragInverse.makeRotationFromQuaternion(turned).invert();
-    spinMatrix.makeRotationY(t * PLANET_SPIN * world.spin + world.phase).multiply(alignAxis).multiply(dragInverse);
+    spinMatrix.makeRotationY(t * PLANET_SPIN * world.spin + world.phase).multiply(alignAxis).multiply(dragInverse).multiply(orbit.matrix); // [r3:navigator]
     skyUniforms.uBody.value.setFromMatrix4(spinMatrix);
-    skyUniforms.uRingNormal.value.copy(ringNormal).applyQuaternion(turned);
-    spinMatrix.makeRotationY(t * PLANET_SPIN * world.spin * 1.35 + world.phase * 1.7 + 0.8).multiply(alignAxis).multiply(dragInverse);
+    skyUniforms.uRingNormal.value.copy(ringNormal).applyQuaternion(turned).applyQuaternion(orbit.inverse); // [r3:navigator]
+    spinMatrix.makeRotationY(t * PLANET_SPIN * world.spin * 1.35 + world.phase * 1.7 + 0.8).multiply(alignAxis).multiply(dragInverse).multiply(orbit.matrix); // [r3:navigator]
     skyUniforms.uCloudBody.value.setFromMatrix4(spinMatrix);
     const lift = planet.radius * (1.0 + 0.004 + 0.02 * rise);
     const sunX = planet.x - drift.value.x * 26 + along.x * lift;
@@ -1558,6 +1581,15 @@ function start(hero, art) {
     compositeUniforms.uSunPx.value.set(sunX * ratio, sunY * ratio);
     compositeUniforms.uPlanetPx.value.set((planet.x - drift.value.x * 26) * ratio, (planet.y - drift.value.y * 26) * ratio, planet.radius * ratio);
     compositeUniforms.uSunShow.value = (0.25 + 0.75 * Math.min(1, rise * 1.6 + 0.2)) * (narrow ? 0.55 : 1);
+    // [r3:navigator] Turned, the sun moves round the limb, and hides once it is behind the viewer.
+    if (orbit.turned) {
+      orbit.toView(sunDir.value, orbitSun);
+      const reach = Math.hypot(orbitSun.x, orbitSun.y);
+      if (reach > 1e-4) {
+        compositeUniforms.uSunPx.value.set((planet.x - drift.value.x * 26 + (orbitSun.x / reach) * lift) * ratio, (planet.y - drift.value.y * 26 + (orbitSun.y / reach) * lift) * ratio);
+      }
+      compositeUniforms.uSunShow.value *= THREE.MathUtils.clamp((0.15 - orbitSun.z) / 0.35, 0, 1);
+    }
     // A twin-sun world's second sun trails the first along the limb, lower and smaller.
     if (world.suns > 1) {
       const trail = 0.12;
@@ -1662,6 +1694,20 @@ function start(hero, art) {
     // The camera drifts, as if on a slow orbit of its own.
     camera.position.set(Math.sin(t * 0.05) * 0.35, Math.sin(t * 0.07) * 0.18, 10);
     camera.lookAt(0, 0, 0);
+    // [r3:navigator] The orbit turns the camera rigidly about the world under the planet's centre,
+    // which so keeps its place on screen, and the jewel with it, so the logo stays put too.
+    if (orbit.turned) {
+      const focusX = planetLike() ? planet.x - drift.value.x * 26 : (freeRegion[0] + freeRegion[2]) / 2;
+      const focusY = planetLike() ? height - (planet.y - drift.value.y * 26) : (freeRegion[1] + freeRegion[3]) / 2;
+      orbitNdc.set((focusX / width) * 2 - 1, 1 - (focusY / height) * 2);
+      camera.updateMatrixWorld();
+      raycaster.setFromCamera(orbitNdc, camera);
+      if (!raycaster.ray.intersectPlane(orbitPlane, orbitFocus)) orbitFocus.set(0, 0, 0);
+      orbit.carry(camera, orbitFocus);
+      orbit.carry(pivot, orbitFocus);
+      camera.updateMatrixWorld();
+    }
+    skyUniforms.uSunDir.value.copy(sunDir.value).applyQuaternion(orbit.inverse); // [r3:navigator]
     jewelUniforms.uCamera.value = camera.position;
     jewelUniforms.uSunDir.value.copy(sunDir.value);
 
@@ -1866,6 +1912,7 @@ function start(hero, art) {
   }
   function swapWorld() {
     jump.swapped = true;
+    orbit.reset(); // [r3:navigator] a jump arrives framed as the hero frames it
     fleet.dispose();
     if (!jump.world) chooseDestination();
     vista = jump.vista;
