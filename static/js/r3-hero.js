@@ -37,6 +37,7 @@ import { pickScenario } from './r3-shipyard.js';
 import { decorateSurvey } from './r3-guide.js'; // [r3:guide]
 import { createOrbit } from './r3-camera.js'; // [r3:navigator]
 import { createSensors } from './r3-sensors.js'; // [r3:gunnery]
+import { createNav } from './r3-nav.js'; // [r3:chart]
 import { createPilot } from './r3-pilot.js'; // [r3:pilot]
 
 const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -996,6 +997,7 @@ function start(hero, art) {
   survey.setAttribute('aria-hidden', 'true');
   survey.title = 'Jump to hyperspace';
   (art || hero).append(survey);
+  let nav = null; // [r3:chart] the flight computer, made once the fleet is
   function showSurvey() {
     survey.replaceChildren();
     const name = vista.kind === 'planet' ? world.name : vista.name;
@@ -1007,6 +1009,7 @@ function start(hero, art) {
       survey.append(span);
     }
     decorateSurvey(survey, planetLike() ? world.name : name); // [r3:guide] the Game Guide's pages for this world
+    if (nav) nav.decorate(); // [r3:chart] the chart's trigger and the permalink control
   }
   const sunColor = new THREE.Color(1.0, 0.93, 0.82).multiplyScalar(1.6);
 
@@ -1134,6 +1137,28 @@ function start(hero, art) {
   let fleet = createFleet({ scene, camera, time, sunDir, sunColor, air, reduceMotion, overlay: art || hero, anisotropy: renderer.capabilities.getMaxAnisotropy(), random: world.random, memory });
   // [r3:director] rare encounters, built from the fleet's kit.
   let director = createDirector({ kit: fleet.kit, fleet, memory, random: world.random });
+  // [r3:chart] What replays this scene: the world by name and seed, the backdrop by kind and seed,
+  // the frame and the fleet's sides. Kept by the flight computer and written into permalinks.
+  const recipe = () => ({
+    world: world.name, seed: world.seedValue, vista: vista.kind, vseed: vista.vseed, frame: world.frame && world.frame.kind,
+    sides: [...fleet.kit.scenario.sides], war: !!fleet.kit.scenario.war,
+    label: planetLike() ? world.name : vista.name, note: planetLike() ? world.note : vista.note,
+    unlisted: !!(world.unlisted || vista.unlisted),
+  });
+  // What is in the sky as the link is copied: the hull on screen, and a pass in flight.
+  const live = () => {
+    const kit = fleet.kit;
+    const on = kit.visits.find((visit) => visit.ship && (visit.state === 'cruising' || visit.state === 'arriving'));
+    const pass = kit.pass && kit.pass.active && Number.isInteger(kit.pass.kind) ? ['dive', 'climb', 'cross', 'launch'][kit.pass.kind] : null;
+    return { ship: on && !kit.scenario.war ? on.ship.kind : null, pass };
+  };
+  nav = createNav({ stage: art || hero, survey, jumpTo: (scene) => (jump.active ? false : (beginJump(scene), true)), live, reduceMotion });
+  // A test hook: this scene's recipe, and a fingerprint of everything drawn from it.
+  hero.r3Nav = {
+    recipe,
+    fingerprint: () => JSON.stringify({ world, vista, sides: fleet.kit.scenario.sides, war: fleet.kit.scenario.war, hulls: fleet.kit.capitals.map((entry) => entry.kind) },
+      (key, value) => (typeof value === 'number' ? Number(value.toFixed(6)) : typeof value === 'function' ? undefined : value)),
+  };
   director.onArrive({ world: world.name, vista: vista.kind });
 
   const brightMaterial = fullscreenMaterial(BRIGHT_FRAGMENT, { tInput: { value: sceneTarget.texture }, uThreshold: { value: 1.1 } });
@@ -2051,6 +2076,7 @@ function start(hero, art) {
   function beginJump(target = null) {
     if (jump.active) return;
     jump.target = typeof target === 'string' ? target : null;
+    jump.scene = target && typeof target === 'object' ? target : null; // [r3:chart] a stop on the chart, replayed
     if (reduceMotion) {
       chooseDestination();
       swapWorld();
@@ -2070,9 +2096,15 @@ function start(hero, art) {
   function chooseDestination() {
     const target = jump.target;
     jump.target = null;
-    let next = pickWorld({ fresh: true, exclude: world.name, name: target });
-    const nextVista = target || next.face ? { kind: 'planet', index: 0 } : pickVista(next.random, { fresh: true, exclude: vista.kind }); // [r3:howard] next.face
-    if (nextVista.world) next = pickWorld({ fresh: true, name: nextVista.world });
+    // [r3:chart] A jump back from the chart replays the visit from its recipe.
+    const replay = jump.scene;
+    jump.scene = null;
+    jump.scenario = replay && replay.sides ? { war: replay.war, sides: replay.sides } : null;
+    let next = replay ? pickWorld({ fresh: true, name: replay.world, seed: replay.seed }) : pickWorld({ fresh: true, exclude: world.name, name: target });
+    const nextVista = replay ? pickVista(next.random, { fresh: true, kind: replay.vista, vseed: replay.vseed })
+      : target || next.face ? pickVista(next.random, { fresh: true, kind: 'planet' }) : pickVista(next.random, { fresh: true, exclude: vista.kind }); // [r3:howard] next.face; [r3:chart] always drawn, so every path replays
+    if (nextVista.world) next = pickWorld({ fresh: true, name: nextVista.world, seed: replay ? replay.seed : null });
+    if (replay && replay.frame && next.frame) next.frame.kind = replay.frame; // [r3:chart]
     jump.world = next;
     jump.vista = nextVista;
     if (jump.warm) retire(jump.warm);
@@ -2111,11 +2143,13 @@ function start(hero, art) {
     // [r3:memory] The jump and the new world are remembered before the new fleet reads the memory.
     memory.record('jump');
     memory.record('survey', { world: world.name });
-    fleet = createFleet({ scene, camera, time, sunDir, sunColor, air, reduceMotion, overlay: art || hero, anisotropy: renderer.capabilities.getMaxAnisotropy(), random: world.random, scenario: pickScenario(world.random, { fresh: true }), memory });
+    fleet = createFleet({ scene, camera, time, sunDir, sunColor, air, reduceMotion, overlay: art || hero, anisotropy: renderer.capabilities.getMaxAnisotropy(), random: world.random, scenario: jump.scenario || pickScenario(world.random, { fresh: true }), memory, fresh: true }); // [r3:chart] jump.scenario, fresh
     director.dispose(); // [r3:director] the old one's ships went with the old fleet
     director = createDirector({ kit: fleet.kit, fleet, memory, random: world.random });
     director.onArrive({ world: world.name, vista: vista.kind });
     environment.onArrive({ kit: fleet.kit, vista }); // [r3:environment]
+    jump.scenario = null; // [r3:chart]
+    nav.arrive(recipe()); // [r3:chart] charted, unless unlisted
     if (vista.kind === 'heatDeath') fleet.leave();
     starPlaced = true;
     layout();
@@ -2154,6 +2188,7 @@ function start(hero, art) {
     if (event.target.closest('.r3-survey__jump')) beginJump();
   });
   applyWorld(world);
+  nav.arrive(recipe()); // [r3:chart] the first stop
   if (vista.kind === 'heatDeath') fleet.leave();
 
   // Every shader is compiled before the first frame, in the background where the browser can

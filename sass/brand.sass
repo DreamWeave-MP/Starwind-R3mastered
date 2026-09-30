@@ -171,6 +171,238 @@
     > :not(.dw-kicker)
       pointer-events: auto
 
+// [r3:chart] The readout's name opens the flight computer; its link control copies the scene's
+// address, and says so for a moment.
+.r3-survey__chart,
+.r3-survey__link
+  pointer-events: auto
+  cursor: pointer
+  transition: opacity .2s ease, color .2s ease
+
+  &:hover
+    color: var(--dw-accent)
+
+.r3-survey__link
+  opacity: .55
+
+  &:hover
+    opacity: 1
+
+  &.is-done
+    color: var(--dw-accent)
+    opacity: 1
+
+// [r3:chart] The flight computer: a tactical chart of the session's course, projected over the
+// simulation only, as a hologram rather than a window.
+.r3-chart
+  position: absolute
+  inset: 0
+  z-index: 8
+  display: grid
+  grid-template-rows: auto minmax(0, 1fr) auto
+  gap: .3rem
+  padding: .75rem 1rem .65rem
+  overflow: hidden
+  background: radial-gradient(ellipse 70% 80% at 50% 52%, color-mix(in oklab, var(--dw-accent) 12%, rgb(4 12 16 / 74%)), rgb(2 7 10 / 90%) 72%)
+  backdrop-filter: blur(1.5px) saturate(.7)
+  color: color-mix(in oklab, var(--dw-accent) 82%, white)
+  font-family: var(--dw-font-mono)
+  opacity: 0
+  transform: scale(1.015)
+  transition: opacity .22s ease, transform .3s var(--dw-ease)
+  pointer-events: auto
+  cursor: default
+  user-select: none
+  -webkit-user-select: none
+
+  &.is-open
+    opacity: 1
+    transform: none
+
+  // Scan lines and a slow sweep, as a projection has.
+  &::before,
+  &::after
+    content: ""
+    position: absolute
+    inset: 0
+    pointer-events: none
+
+  &::before
+    background: repeating-linear-gradient(to bottom, transparent 0 2px, color-mix(in oklab, var(--dw-accent) 5%, transparent) 2px 3px)
+
+  &::after
+    background: linear-gradient(to bottom, transparent, color-mix(in oklab, var(--dw-accent) 9%, transparent) 50%, transparent)
+    background-size: 100% 36%
+    background-repeat: no-repeat
+    animation: r3-chart-sweep 6s linear infinite
+
+.r3-chart__head,
+.r3-chart__foot
+  position: relative
+  z-index: 1
+  display: flex
+  justify-content: space-between
+  gap: 1rem
+  margin: 0
+  font-size: .64rem
+  letter-spacing: .16em
+  text-transform: uppercase
+  text-shadow: 0 0 8px color-mix(in oklab, var(--dw-accent) 45%, transparent)
+
+.r3-chart__foot
+  justify-content: center
+  color: var(--dw-text-muted)
+  font-size: .58rem
+
+.r3-chart__close
+  opacity: .7
+  cursor: pointer
+  transition: opacity .2s ease, color .2s ease
+
+  &:hover
+    color: white
+    opacity: 1
+
+.r3-chart__panel
+  position: relative
+  z-index: 1
+  min-height: 0
+
+.r3-chart__map
+  display: block
+  width: 100%
+  height: 100%
+  overflow: visible
+  color: var(--dw-accent)
+
+.r3-chart__arm
+  fill: none
+  stroke: currentColor
+  stroke-opacity: .11
+  stroke-linecap: round
+  stroke-linejoin: round
+
+.r3-chart__ring
+  fill: none
+  stroke: currentColor
+  stroke-opacity: .32
+
+.r3-chart__region
+  fill: currentColor
+  fill-opacity: .5
+  letter-spacing: .18em
+  text-transform: uppercase
+
+.r3-chart__trail
+  fill: none
+  stroke: currentColor
+  stroke-opacity: .16
+  stroke-linecap: round
+  stroke-linejoin: round
+
+.r3-chart__path
+  fill: none
+  stroke: color-mix(in oklab, var(--dw-accent) 70%, white)
+  stroke-linecap: round
+  stroke-linejoin: round
+  animation: r3-chart-flow 1.4s linear infinite
+
+.r3-chart__stop
+  cursor: pointer
+  outline: none
+
+  &.is-current
+    cursor: default
+
+.r3-chart__hit
+  fill: transparent
+
+.r3-chart__halo
+  fill: currentColor
+  fill-opacity: 0
+  transition: fill-opacity .2s ease
+
+.r3-chart__dot
+  fill: color-mix(in oklab, var(--dw-accent) 60%, white)
+  filter: drop-shadow(0 0 2px var(--dw-accent))
+
+.r3-chart__here
+  fill: none
+  stroke: white
+  transform-box: fill-box
+  transform-origin: center
+  animation: r3-chart-here 2.2s ease-out infinite
+
+.r3-chart__here--late
+  animation-delay: 1.1s
+
+.r3-chart__label
+  fill: color-mix(in oklab, var(--dw-accent) 35%, white)
+  font-weight: 700
+  letter-spacing: .08em
+  text-transform: uppercase
+  paint-order: stroke
+  stroke: rgb(2 8 11 / 85%)
+  stroke-width: .35em
+
+.r3-chart__sub,
+.r3-chart__guide
+  fill: currentColor
+  fill-opacity: .6
+  letter-spacing: .1em
+  text-transform: uppercase
+  paint-order: stroke
+  stroke: rgb(2 8 11 / 85%)
+  stroke-width: .35em
+
+.r3-chart__guide
+  fill: color-mix(in oklab, var(--dw-accent) 50%, white)
+  fill-opacity: .9
+
+.r3-chart__stop:not(.is-current):hover,
+.r3-chart__stop:not(.is-current):focus-visible
+  .r3-chart__halo
+    fill-opacity: .22
+
+  .r3-chart__label
+    fill: white
+
+.r3-chart__stop.is-current .r3-chart__dot
+  fill: white
+
+@keyframes r3-chart-flow
+  to
+    stroke-dashoffset: var(--dash, -8)
+
+@keyframes r3-chart-here
+  from
+    opacity: .9
+    transform: scale(.6)
+  to
+    opacity: 0
+    transform: scale(2.2)
+
+@keyframes r3-chart-sweep
+  from
+    background-position: 0 -40%
+  to
+    background-position: 0 140%
+
+@media (prefers-reduced-motion: reduce)
+  .r3-chart,
+  .r3-chart::after,
+  .r3-chart__path,
+  .r3-chart__here
+    animation: none
+    transition: none
+
+@media (max-width: 600px)
+  .r3-chart
+    padding: .55rem .6rem .5rem
+
+  .r3-chart__head
+    font-size: .56rem
+
 .r3-survey__note
   color: var(--dw-text-muted)
 
