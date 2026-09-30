@@ -933,8 +933,9 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     const visible = 2 * (10 - z) * tanHalf;
     return out.set(((px - view.width / 2) / view.height) * visible, ((view.height / 2 - py) / view.height) * visible, z);
   }
+  const projected = new THREE.Vector3(); // [r3:qa] scratch: screenOf runs for every bracket corner, every frame
   function screenOf(point, out) {
-    const p = point.clone().project(camera);
+    const p = projected.copy(point).project(camera);
     return out.set((p.x * 0.5 + 0.5) * view.width, (0.5 - p.y * 0.5) * view.height, p.z);
   }
   // World units per css pixel at a depth.
