@@ -34,6 +34,7 @@ import { createMemory } from './r3-memory.js'; // [r3:memory]
 import { createDirector } from './r3-events.js'; // [r3:director]
 import { createEnvironment } from './r3-environment.js'; // [r3:environment]
 import { pickScenario } from './r3-shipyard.js';
+import { decorateSurvey } from './r3-guide.js'; // [r3:guide]
 
 const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -958,6 +959,7 @@ function start(hero, art) {
       span.textContent = text;
       survey.append(span);
     }
+    decorateSurvey(survey, planetLike() ? world.name : name); // [r3:guide] the Game Guide's pages for this world
   }
   const sunColor = new THREE.Color(1.0, 0.93, 0.82).multiplyScalar(1.6);
 

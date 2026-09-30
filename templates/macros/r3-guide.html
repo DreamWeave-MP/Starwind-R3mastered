@@ -1,0 +1,70 @@
+{#- Which Game Guide pages belong to which of the hero's worlds, as JSON, from the guide itself.
+
+    A page belongs to a world when its "Key locations" row (read from the rendered table, the only
+    form get_section gives) names a place there: one of the world's
+    spellings in data/r3/guide-worlds.toml followed by a comma or a space ("Tatooine, Sandriver",
+    "Tatooine Czerka Office"). Only the row is read, never the prose, so a passing mention does not
+    count. Worlds the guide never visits are left out.
+
+    {"worlds": {"Tatooine": {"slug": "tatooine", "count": 81, "entries": [{"t": title, "u": url,
+    "c": category, "j": journal id}, ...]}, ...}} -#}
+{% macro index() -%}
+{%- set worlds = load_data(path="data/r3/guide-worlds.toml") -%}
+{%- set root = get_section(path="guide/_index.md") -%}
+{%- set_global guide_pages = root.pages -%}
+{%- for sub_path in root.subsections -%}
+  {%- set sub = get_section(path=sub_path) -%}
+  {%- set_global guide_pages = guide_pages | concat(with=sub.pages) -%}
+  {%- for deeper_path in sub.subsections -%}
+    {%- set deeper = get_section(path=deeper_path) -%}
+    {%- set_global guide_pages = guide_pages | concat(with=deeper.pages) -%}
+  {%- endfor -%}
+{%- endfor -%}
+{#- Each page's Key locations row, with ", " after it so the last place ends like the others, and
+    its entry, encoded once. -#}
+{%- set_global rows = [] -%}
+{%- set_global entries = [] -%}
+{%- for guide_page in guide_pages -%}
+  {%- set located = guide_page.content | split(pat="<strong>Key locations</strong></td>") -%}
+  {%- if located | length > 1 -%}
+    {%- set row = located[1] | split(pat="</td>") | first -%}
+    {%- set row = row ~ ", " -%}
+    {%- set filed = guide_page.content | split(pat="<strong>Category</strong></td>") -%}
+    {%- if filed | length > 1 %}{% set category = filed[1] | split(pat="</td>") | first | replace(from="<td>", to="") | replace(from="&amp;", to="&") | trim %}{% else %}{% set category = "" %}{% endif -%}
+    {%- set journal = guide_page.extra.journal_id | default(value="") -%}
+    {%- set j_title = guide_page.title | json_encode -%}
+    {%- set j_url = guide_page.permalink | json_encode -%}
+    {%- set j_category = category | json_encode -%}
+    {%- set j_journal = journal | json_encode -%}
+    {%- set entry = '{"t":' ~ j_title ~ ',"u":' ~ j_url ~ ',"c":' ~ j_category ~ ',"j":' ~ j_journal ~ '}' -%}
+    {%- set_global rows = rows | concat(with=row) -%}
+    {%- set_global entries = entries | concat(with=entry) -%}
+  {%- endif -%}
+{%- endfor -%}
+{%- set_global worlds_json = "" -%}
+{%- for world in worlds.worlds -%}
+  {%- set_global world_entries = "" -%}
+  {%- set_global world_count = 0 -%}
+  {%- for row in rows -%}
+    {%- set_global hit = false -%}
+    {%- for spelling in world.match -%}
+      {%- set before_comma = spelling ~ "," -%}
+      {%- set before_space = spelling ~ " " -%}
+      {%- if row is containing(before_comma) or row is containing(before_space) %}{% set_global hit = true %}{% endif -%}
+    {%- endfor -%}
+    {%- if hit -%}
+      {%- set entry = entries[loop.index0] -%}
+      {%- if world_count > 0 %}{% set_global world_entries = world_entries ~ "," %}{% endif -%}
+      {%- set_global world_entries = world_entries ~ entry -%}
+      {%- set_global world_count = world_count + 1 -%}
+    {%- endif -%}
+  {%- endfor -%}
+  {%- if world_count > 0 -%}
+    {%- set j_name = world.name | json_encode -%}
+    {%- set j_slug = world.slug | json_encode -%}
+    {%- if worlds_json %}{% set_global worlds_json = worlds_json ~ "," %}{% endif -%}
+    {%- set_global worlds_json = worlds_json ~ j_name ~ ':{"slug":' ~ j_slug ~ ',"count":' ~ world_count ~ ',"entries":[' ~ world_entries ~ ']}' -%}
+  {%- endif -%}
+{%- endfor -%}
+{"worlds":{ {{- worlds_json | safe -}} }}
+{%- endmacro index %}
