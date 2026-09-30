@@ -1460,7 +1460,8 @@ function start(hero, art) {
       const point = heroPoint(event);
       const onLink = event.target.closest(interactive) || event.target.closest('.r3-survey') || overText(point);
       const body = onLink ? null : systemWorldAt(point);
-      hero.style.cursor = onLink ? '' : fleet.aimed(point.x, point.y) || director.aimed(point.x, point.y) /* [r3:director] */ ? 'crosshair' : body || overJewel(point) ? 'pointer' : overPlanet(point) ? 'grab' : '';
+      // [r3:qa] In the order a press is taken: the jewel first, then the ships behind it.
+      hero.style.cursor = onLink ? '' : overJewel(point) ? 'pointer' : fleet.aimed(point.x, point.y) || director.aimed(point.x, point.y) /* [r3:director] */ ? 'crosshair' : body ? 'pointer' : overPlanet(point) ? 'grab' : '';
       waypoint.classList.toggle('is-shown', !!body);
       if (body) {
         waypoint.textContent = `${body.world.name} ⟫`;
