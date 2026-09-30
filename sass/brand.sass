@@ -177,6 +177,16 @@
     color: var(--dw-accent)
     opacity: 1
 
+// [r3:chart] While the chart is up, the stage's own labels (contacts, waypoints, the sensor scope)
+// step back, and the scene beneath shows through alone.
+.is-charting
+  .r3-contact,
+  .r3-waypoint,
+  .r3-sensors,
+  .r3-sensors__readout
+    opacity: 0 !important
+    transition: opacity .2s ease
+
 // [r3:chart] The flight computer: a tactical chart of the session's course, projected over the
 // simulation only, as a hologram rather than a window.
 .r3-chart

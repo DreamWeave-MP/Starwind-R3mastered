@@ -163,6 +163,7 @@ export function createNav({ stage, survey, jumpTo, live = () => ({}), reduceMoti
     const root = open;
     open = null;
     root.classList.remove('is-open');
+    stage.classList.remove('is-charting');
     setTimeout(() => root.remove(), reduceMotion ? 0 : 220);
     window.removeEventListener('keydown', onKey);
     document.removeEventListener('pointerdown', onOutside, true);
@@ -205,6 +206,7 @@ export function createNav({ stage, survey, jumpTo, live = () => ({}), reduceMoti
       if (!event.target.closest('.r3-chart__head')) close();
     });
     stage.append(root);
+    stage.classList.add('is-charting');
     open = root;
     render();
     requestAnimationFrame(() => root.classList.add('is-open'));
