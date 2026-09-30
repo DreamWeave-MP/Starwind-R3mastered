@@ -283,6 +283,7 @@ export function createDirector({ kit, fleet = null, memory = null, random = kit.
   }
 
   // Designs, built as needed and kept for the visit.
+  const capitalKey = (kind, shape) => `capital:${kind}${shape ? `|${JSON.stringify(shape)}` : ''}`; // [r3:lore]
   const designs = new Map();
   function design(key) {
     if (!designs.has(key)) {
@@ -295,7 +296,9 @@ export function createDirector({ kit, fleet = null, memory = null, random = kit.
       else if (key.startsWith('chunk')) geometry = chunkGeometry(Number(key.slice(5)) + 1);
       else if (key.startsWith('fighter:')) geometry = buildFighter(key.slice(8)).geometry;
       else {
-        const built = buildCapital(key.slice(8), random);
+        // [r3:lore] A capital's key carries its class's shape: capital:wedge|{"half":0.24,...}.
+        const [kind, shape] = key.slice(8).split('|');
+        const built = buildCapital(kind, random, shape ? JSON.parse(shape) : undefined);
         designs.set(key, { geometry: built.geometry, extremes: built.extremes });
         return designs.get(key);
       }
@@ -747,12 +750,12 @@ export function createDirector({ kit, fleet = null, memory = null, random = kit.
       eligible: (context) => context.destroyed > 0 || scenario.war || random() < 0.35,
       start() {
         const side = pick(sides);
-        const [kind, label] = pick(side.capitals);
+        const [kind, label, shape] = pick(side.capitals);
         const size = view.narrow ? 110 : 280;
         const plan = lane({ depth: -9.5, size });
         const velocity = new THREE.Vector3((random() < 0.5 ? -1 : 1) * 0.05, -0.015, 0);
         const ship = spawn({
-          key: `capital:${kind}`, side, length: size * plan.perPx, position: toWorld((plan.x0 + plan.x1) / 2, plan.y + (view.narrow ? 0 : 20), plan.depth), velocity,
+          key: capitalKey(kind, shape), side, length: size * plan.perPx, position: toWorld((plan.x0 + plan.x1) / 2, plan.y + (view.narrow ? 0 : 20), plan.depth), velocity,
           heading: new THREE.Vector3(velocity.x < 0 ? -1 : 1, -0.1, 0.35), up: new THREE.Vector3(0.35, 1, 0.2), textured: true, haze: 0.1, char: 0.15, hyper: false,
           label: `${side.name} ▸ ${label} · disabled`, contactClass: 'r3-contact--derelict', hp: 5,
           tumble: { axis: new THREE.Vector3(0.2, 0.1, 1).normalize(), rate: 0.035 },
@@ -810,12 +813,12 @@ export function createDirector({ kit, fleet = null, memory = null, random = kit.
       eligible: (context) => context.vista === 'shipyard',
       start() {
         const side = sides[0];
-        const [kind, label] = pick(side.capitals);
+        const [kind, label, shape] = pick(side.capitals);
         const size = view.narrow ? 120 : 300;
         const plan = lane({ depth: -8, size });
         const velocity = new THREE.Vector3(0.09, 0.012, 0);
         const cruiser = spawn({
-          key: `capital:${kind}`, side, length: size * plan.perPx, position: toWorld(plan.x0 - size * 0.2, plan.y + 10, plan.depth), velocity,
+          key: capitalKey(kind, shape), side, length: size * plan.perPx, position: toWorld(plan.x0 - size * 0.2, plan.y + 10, plan.depth), velocity,
           heading: new THREE.Vector3(1, 0.03, 0.35), textured: true, haze: 0.05, hyper: false, label: `${side.name} ▸ new build · ${label}`, contactClass: 'r3-contact--civil', hp: 6,
           think(actor) {
             if (actor.age < 7) {
@@ -924,13 +927,13 @@ export function createDirector({ kit, fleet = null, memory = null, random = kit.
       eligible: (context) => context.destroyed > 0 || scenario.war,
       start() {
         const side = pick(Object.entries(FACTIONS).map(([key, value]) => ({ key, ...value })));
-        const [kind, label] = pick(side.capitals);
+        const [kind, label, shape] = pick(side.capitals);
         const size = view.narrow ? 160 : 420;
         const plan = lane({ depth: -13, size });
         const leftward = random() < 0.5;
         const speed = (view.width - plan.x0 + size) * plan.perPx / 28;
         const hulk = spawn({
-          key: `capital:${kind}`, side, length: size * plan.perPx, position: toWorld(leftward ? view.width + size * 0.35 : plan.x0 - size * 0.1, plan.y + 30, plan.depth),
+          key: capitalKey(kind, shape), side, length: size * plan.perPx, position: toWorld(leftward ? view.width + size * 0.35 : plan.x0 - size * 0.1, plan.y + 30, plan.depth),
           velocity: new THREE.Vector3(leftward ? -speed : speed, -speed * 0.08, 0), heading: new THREE.Vector3(1, 0.2, 0.4), textured: true, haze: 0.25, char: 0.7, hyper: false,
           label: `Wreck ▸ ${label}`, contactClass: 'r3-contact--derelict', hp: 8, tumble: { axis: new THREE.Vector3(0.3, 1, 0.4).normalize(), rate: 0.06 },
           think(actor) {
