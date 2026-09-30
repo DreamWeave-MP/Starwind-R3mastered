@@ -546,3 +546,13 @@
 
   pre
     max-width: 100%
+
+// The hero's words are part of the scene: clicking and dragging through them flies, orbits and
+// shoots, so they are not selectable text there.
+.dw-hero--art
+  .dw-kicker,
+  .dw-hero__title,
+  .dw-hero__summary
+    user-select: none
+    -webkit-user-select: none
+    -webkit-touch-callout: none
