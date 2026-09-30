@@ -1189,6 +1189,7 @@ function start(hero, art) {
   let ratio = 1;
   let quality = 1;
   let slowTime = 0;
+  let fastTime = 0; // [r3:qa] how long frames have been comfortably quick, to win back quality
   let narrow = false;
   const jewelPx = { x: 0, y: 0, radius: 1 };
   let starPlaced = false;
@@ -1590,6 +1591,15 @@ function start(hero, art) {
       if (slowTime > 1.5 && quality > 0.5) {
         quality = Math.max(0.5, quality - 0.2);
         slowTime = 0;
+        fastTime = -8; // [r3:qa] after stepping down, twice as long before stepping up again
+        layout();
+      }
+      // [r3:qa] One hitch, a shader compiling in a jump say, used to cost the visit its resolution for
+      // good. Eight seconds of quick frames now wins a step back.
+      fastTime = rawDt < 1 / 50 ? fastTime + rawDt : Math.min(fastTime, 0);
+      if (fastTime > 8 && quality < 1) {
+        quality = Math.min(1, quality + 0.1);
+        fastTime = 0;
         layout();
       }
     }
