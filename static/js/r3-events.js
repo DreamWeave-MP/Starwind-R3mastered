@@ -943,7 +943,7 @@ export function createDirector({ kit, fleet = null, memory = null, random = kit.
       hazeUniforms.uScale.value = (view.height * view.ratio) / (2 * tanHalf);
       hazeUniforms.uMaxSize.value = view.height * view.ratio * 0.2;
       lampUniforms.uScale.value = Math.max(4, 7 * view.ratio);
-      if (forced && !forcedDone && now() - arrived > 2.5 && EVENTS[forced]) {
+      if (forced && !forcedDone && now() - arrived > 1.2 && EVENTS[forced]) {
         forcedDone = true;
         begin(forced);
       }
