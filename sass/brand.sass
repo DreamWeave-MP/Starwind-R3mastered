@@ -447,6 +447,11 @@
   &.is-friendly
     color: #6aff9a
 
+  // [r3:orbit] Behind the planet or a star, all of it: the brackets step back until it shows again.
+  // It comes after the hostile brackets' lock so that it wins over it.
+  &.is-locked.is-occluded
+    opacity: .22
+
   @media (forced-colors: active)
     display: none
 
@@ -889,8 +894,9 @@ $r3-band: clamp(.8rem, .5rem + .9vw, 1.3rem)
     height: clamp(380px, 100vh - 15rem, 840px)
     overflow: hidden
     border-top: 1px solid var(--dw-line)
-    // The planet and the orbit take sideways drags; vertical swipes still scroll the page.
-    touch-action: pan-y pinch-zoom
+    // [r3:orbit] One finger's sideways drag turns the view and two fingers orbit and pinch it
+    // (r3-camera.js); vertical swipes still scroll the page.
+    touch-action: pan-y
 
   // Narrow: the band reads straight down, the facts and the readout sharing its last lines.
   @media (max-width: 900px)

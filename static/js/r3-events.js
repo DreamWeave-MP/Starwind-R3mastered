@@ -36,7 +36,6 @@ const HAZE_VERTEX = /* glsl */ `
   uniform float uMaxSize;
   varying float vAge;
   varying float vKind;
-  varying float vDepth;
   void main() {
     float t = uNow - aLife.x;
     float age = t / max(aLife.y, 1e-3);
@@ -49,21 +48,15 @@ const HAZE_VERTEX = /* glsl */ `
     }
     vec3 p = position + aVelocity * t * (1.0 - 0.45 * age);
     vec4 view = modelViewMatrix * vec4(p, 1.0);
-    vDepth = -view.z;
     gl_Position = projectionMatrix * view;
     float grow = 0.35 + 1.9 * sqrt(age);
     gl_PointSize = min(aLife.z * grow * uScale / max(-view.z, 0.1), uMaxSize);
   }
 `;
 const HAZE_FRAGMENT = /* glsl */ `
-  uniform vec3 uPlanetDisc;
-  uniform vec2 uPlanetDepth;
   varying float vAge;
   varying float vKind;
-  varying float vDepth;
   void main() {
-    float d = length(gl_FragCoord.xy - uPlanetDisc.xy) / max(uPlanetDisc.z, 1.0);
-    if (d < 1.0 && vDepth > uPlanetDepth.x - uPlanetDepth.y * sqrt(1.0 - d * d)) discard;
     float r = length(gl_PointCoord - 0.5) * 2.0;
     if (r > 1.0) discard;
     float soft = (1.0 - smoothstep(0.25, 1.0, r));
@@ -91,24 +84,17 @@ const LAMP_VERTEX = /* glsl */ `
   uniform float uTime;
   uniform float uScale;
   varying vec3 vColor;
-  varying float vDepth;
   void main() {
     float on = aBlink.x > 0.0 ? step(0.55, fract(uTime * aBlink.x + aBlink.y)) : 1.0;
     vColor = aColor * on;
     vec4 view = modelViewMatrix * vec4(position, 1.0);
-    vDepth = -view.z;
     gl_Position = projectionMatrix * view;
     gl_PointSize = on > 0.0 ? uScale : 0.0;
   }
 `;
 const LAMP_FRAGMENT = /* glsl */ `
-  uniform vec3 uPlanetDisc;
-  uniform vec2 uPlanetDepth;
   varying vec3 vColor;
-  varying float vDepth;
   void main() {
-    float d = length(gl_FragCoord.xy - uPlanetDisc.xy) / max(uPlanetDisc.z, 1.0);
-    if (d < 1.0 && vDepth > uPlanetDepth.x - uPlanetDepth.y * sqrt(1.0 - d * d)) discard;
     float r = length(gl_PointCoord - 0.5) * 2.0;
     if (r > 1.0) discard;
     gl_FragColor = vec4(vColor * (1.0 - smoothstep(0.0, 1.0, r)), 1.0);

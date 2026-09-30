@@ -20,20 +20,6 @@ import { steerScenario } from './r3-memory.js'; // [r3:memory]
 const SYSTEMS = ['engines', 'weapons', 'hangar', 'bridge'];
 const DAMAGE_WORDS = ['nominal', 'damaged', 'offline', 'destroyed'];
 
-// The planet, which the sky draws as a disc, stands behind the ships as a sphere: its front surface
-// is uPlanetDepth.x from the camera at its limb, uPlanetDepth.y nearer at the disc's centre. A
-// fragment of a ship, trail, bolt or blast that lies behind that surface is hidden, so a fighter
-// diving for the horizon slips behind the limb, and one climbing from the far side rises over it.
-const PLANET = /* glsl */ `
-  uniform vec3 uPlanetDisc;  // the disc's centre and radius, device pixels, y up
-  uniform vec2 uPlanetDepth;
-  bool behindPlanet(float depth) {
-    float r = length(gl_FragCoord.xy - uPlanetDisc.xy) / max(uPlanetDisc.z, 1.0);
-    if (r >= 1.0) return false;
-    return depth > uPlanetDepth.x - uPlanetDepth.y * sqrt(1.0 - r * r);
-  }
-`;
-
 const SHIP_VERTEX = /* glsl */ `
   attribute float aKind;
   uniform float uStretch;
@@ -44,7 +30,6 @@ const SHIP_VERTEX = /* glsl */ `
   varying vec3 vWorld;
   varying vec3 vNormal;
   varying float vKind;
-  varying float vDepth;
   void main() {
     vec3 p = position;
     // Hyperspace: stretched along the line of travel about one end, which stays put: the stern
@@ -58,7 +43,6 @@ const SHIP_VERTEX = /* glsl */ `
     vWorld = world.xyz;
     vNormal = normalize(mat3(modelMatrix) * normal);
     vec4 view = viewMatrix * world;
-    vDepth = -view.z;
     gl_Position = projectionMatrix * view;
   }
 `;
@@ -92,8 +76,6 @@ const SHIP_FRAGMENT = /* glsl */ `
   uniform sampler2D uDetailMap;  // r: relief, g: lit ports
   uniform float uMapScale;
   uniform mat3 uRotation;    // the ship's turn, object to world
-  varying float vDepth;
-  ${PLANET}
 
   float hash21(vec2 p) {
     p = fract(p * vec2(123.34, 456.21));
@@ -128,7 +110,6 @@ const SHIP_FRAGMENT = /* glsl */ `
     vec2 mapDx = dFdx(mapUv);
     vec2 mapDy = dFdy(mapUv);
     vec2 step2 = max(abs(mapDx) + abs(mapDy), vec2(1.0 / 2048.0));
-    if (behindPlanet(vDepth)) discard;
 
     // [r3:lore] Luminous paint, 8: a Gungan hull's bioluminescence and a Mantaris's wingtip knobs,
     // glowing in the livery's paint and breathing slowly.
@@ -253,11 +234,9 @@ const LIGHT_FRAGMENT = /* glsl */ `
 const LINE_VERTEX = /* glsl */ `
   attribute float aAlpha;
   varying float vAlpha;
-  varying float vDepth;
   void main() {
     vAlpha = aAlpha;
     vec4 view = modelViewMatrix * vec4(position, 1.0);
-    vDepth = -view.z;
     gl_Position = projectionMatrix * view;
   }
 `;
@@ -265,10 +244,7 @@ const LINE_VERTEX = /* glsl */ `
 const LINE_FRAGMENT = /* glsl */ `
   uniform vec3 uColor;
   varying float vAlpha;
-  varying float vDepth;
-  ${PLANET}
   void main() {
-    if (behindPlanet(vDepth)) discard;
     gl_FragColor = vec4(uColor * vAlpha, 1.0);
   }
 `;
@@ -285,7 +261,6 @@ const PARTICLE_VERTEX = /* glsl */ `
   uniform float uMaxSize;    // no sprite larger than this, device pixels
   varying float vAge;
   varying float vKind;
-  varying float vDepth;
   void main() {
     float t = uNow - aLife.x;
     float age = t / max(aLife.y, 1e-3);
@@ -299,7 +274,6 @@ const PARTICLE_VERTEX = /* glsl */ `
     float slowing = aLife.w > 0.5 && aLife.w < 1.5 ? 0.15 : 0.55;
     vec3 p = position + aVelocity * t * (1.0 - slowing * age);
     vec4 view = modelViewMatrix * vec4(p, 1.0);
-    vDepth = -view.z;
     gl_Position = projectionMatrix * view;
     float grow = aLife.w < 0.5 ? 0.45 + 1.6 * sqrt(age) : 1.0;
     gl_PointSize = min(aLife.z * grow * uScale / max(-view.z, 0.1), uMaxSize);
@@ -309,10 +283,7 @@ const PARTICLE_VERTEX = /* glsl */ `
 const PARTICLE_FRAGMENT = /* glsl */ `
   varying float vAge;
   varying float vKind;
-  varying float vDepth;
-  ${PLANET}
   void main() {
-    if (behindPlanet(vDepth)) discard;
     float r = length(gl_PointCoord - 0.5) * 2.0;
     if (r > 1.0) discard;
     vec3 col;
@@ -354,12 +325,10 @@ const BOLT_VERTEX = /* glsl */ `
   attribute vec3 aColor;
   varying float vAlpha;
   varying vec3 vColor;
-  varying float vDepth;
   void main() {
     vAlpha = aAlpha;
     vColor = aColor;
     vec4 view = modelViewMatrix * vec4(position, 1.0);
-    vDepth = -view.z;
     gl_Position = projectionMatrix * view;
   }
 `;
@@ -375,14 +344,12 @@ const BOOMA_VERTEX = /* glsl */ `
   uniform float uTime;
   varying float vAlpha;
   varying vec3 vColor;
-  varying float vDepth;
   varying float vSeed;
   void main() {
     vAlpha = aAlpha;
     vColor = aColor;
     vSeed = fract(float(gl_VertexID) * 0.618);
     vec4 view = modelViewMatrix * vec4(position, 1.0);
-    vDepth = -view.z;
     gl_Position = projectionMatrix * view;
     float wobble = 0.9 + 0.1 * sin(uTime * 23.0 + vSeed * 40.0);
     gl_PointSize = aAlpha > 0.0 ? min(aSize * wobble * uScale / max(-view.z, 0.1), 96.0) : 0.0;
@@ -393,11 +360,8 @@ const BOOMA_FRAGMENT = /* glsl */ `
   uniform float uTime;
   varying float vAlpha;
   varying vec3 vColor;
-  varying float vDepth;
   varying float vSeed;
-  ${PLANET}
   void main() {
-    if (behindPlanet(vDepth)) discard;
     vec2 d = gl_PointCoord - 0.5;
     float r = length(d) * 2.0;
     if (r > 1.0) discard;
@@ -413,10 +377,7 @@ const BOOMA_FRAGMENT = /* glsl */ `
 const BOLT_FRAGMENT = /* glsl */ `
   varying float vAlpha;
   varying vec3 vColor;
-  varying float vDepth;
-  ${PLANET}
   void main() {
-    if (behindPlanet(vDepth)) discard;
     gl_FragColor = vec4(vColor * vAlpha * 3.5, 1.0);
   }
 `;
@@ -562,7 +523,6 @@ const SHIELD_VERTEX = /* glsl */ `
   varying vec3 vLocalNormal;
   varying vec3 vWorld;
   varying vec3 vWorldNormal;
-  varying float vDepth;
   void main() {
     vLocal = position;
     vLocalNormal = normal;
@@ -570,7 +530,6 @@ const SHIELD_VERTEX = /* glsl */ `
     vWorld = world.xyz;
     vWorldNormal = normalize(mat3(modelMatrix) * normal);
     vec4 view = viewMatrix * world;
-    vDepth = -view.z;
     gl_Position = projectionMatrix * view;
   }
 `;
@@ -586,8 +545,6 @@ const SHIELD_FRAGMENT = /* glsl */ `
   varying vec3 vLocalNormal;
   varying vec3 vWorld;
   varying vec3 vWorldNormal;
-  varying float vDepth;
-  ${PLANET}
   // 0 in the middle of a hexagon, rising to 1 at its edge.
   float hexEdge(vec2 p) {
     const vec2 s = vec2(1.0, 1.7320508);
@@ -598,7 +555,6 @@ const SHIELD_FRAGMENT = /* glsl */ `
     return smoothstep(0.36, 0.5, max(dot(a, s * 0.5), a.x));
   }
   void main() {
-    if (behindPlanet(vDepth)) discard;
     float glow = 0.0;
     for (int i = 0; i < 6; i++) {
       vec4 hit = uHits[i];
@@ -634,7 +590,9 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
   // [r3:chart] ?ship= and ?pass= pick for the fleet the page opened with, not for every fleet after a jump.
   const address = new URLSearchParams(fresh ? '' : location.search);
   const [hullMap, detailMap] = hullMaps(anisotropy);
-  const planetUniforms = { uPlanetDisc: { value: new THREE.Vector3(-1e5, -1e5, 1) }, uPlanetDepth: { value: new THREE.Vector2(40, 15) } };
+  // [r3:orbit] The planet's disc on the stage, for the scope's lanes (r3-sensors.js): the ships hide
+  // behind it by the depth the sky writes.
+  const planetUniforms = { uPlanetDisc: { value: new THREE.Vector3(-1e5, -1e5, 1) } };
   const linear = (hex) => new THREE.Color(hex).convertSRGBToLinear();
   // Everything the fleet puts in the scene or the page, so dispose() can take it all away again.
   const owned = [];
@@ -1045,6 +1003,9 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     if (contact.width !== width) contact.element.style.width = contact.width = width;
     if (contact.height !== height) contact.element.style.height = contact.height = height;
     mark(contact.element, 'is-locked', true);
+    // [r3:orbit] Hidden entirely behind the backdrop's planet or star (r3-hero.js tells), its
+    // brackets dim.
+    mark(contact.element, 'is-occluded', !!(kit.occluded && kit.occluded(object, points)));
     // [r3:stage] The readout under the brackets stays on the stage: where it would run off the
     // right edge it moves left of them, and never left of the stage. Its width is estimated from
     // the label's length (about 7px a character), so nothing is measured each frame.
