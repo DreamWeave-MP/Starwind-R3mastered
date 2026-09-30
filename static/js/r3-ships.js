@@ -1572,10 +1572,16 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     }
   }
 
+  // [r3:qa] Samples are recycled: a trail sheds its oldest into a spare list and takes new ones from it,
+  // so a pass of fighters allocates nothing per frame.
+  const spareSamples = [];
   function trailSample(fighter, index, point) {
     const trail = fighter.trails[index];
-    trail.samples.unshift({ point: point.clone(), at: clock });
-    while (trail.samples.length > 95 || (trail.samples.length && clock - trail.samples[trail.samples.length - 1].at > 0.6)) trail.samples.pop();
+    const sample = spareSamples.pop() || { point: new THREE.Vector3(), at: 0 };
+    sample.point.copy(point);
+    sample.at = clock;
+    trail.samples.unshift(sample);
+    while (trail.samples.length > 95 || (trail.samples.length && clock - trail.samples[trail.samples.length - 1].at > 0.6)) spareSamples.push(trail.samples.pop());
   }
 
   function drawTrail(trail, fade) {
