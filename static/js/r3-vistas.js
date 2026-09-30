@@ -319,7 +319,7 @@ export const VISTA_GLSL = /* glsl */ `
       }
     }
     float width = mix(a.z * 0.07, b.z * 0.3, at);
-    float stream = exp(-pow(nearest / max(width, 1.0), 2.0)) * (0.6 + 0.5 * noise2(vec2(at * 20.0 - uTime * 1.5, 3.0)));
+    float stream = exp(-pow(abs(nearest) / max(width, 1.0), 2.0)) * (0.6 + 0.5 * noise2(vec2(at * 20.0 - uTime * 1.5, 3.0)));
     col += mix(uColourA, uColourB, at) * stream * 0.9;
     vec4 small = starFace(px, b, uColourB, 0.2);
     col += uColourB * exp(-max(length(d) / b.z - 1.0, 0.0) * 1.4) * 0.4;
@@ -377,7 +377,9 @@ export const VISTA_GLSL = /* glsl */ `
       return mix(bentSky, col, smoothstep(15.0, 22.0, b));
     }
     vec3 normal = discNormal();
-    vec3 e1 = normalize(cross(normal, vec3(0.0, 0.0, 1.0)));
+    // A disc seen square on has no line across it to measure from; any in-plane one will do.
+    vec3 across = cross(normal, vec3(0.0, 0.0, 1.0));
+    vec3 e1 = dot(across, across) > 1e-8 ? normalize(across) : vec3(1.0, 0.0, 0.0);
     vec3 e2 = cross(normal, e1);
     vec3 pos = vec3(d, 40.0);
     vec3 vel = vec3(0.0, 0.0, -1.0);
@@ -439,7 +441,7 @@ export const VISTA_GLSL = /* glsl */ `
       vec2 skyUv = clamp(skyPx / uSkySize, vec2(0.0), vec2(1.0));
       behind = texture2D(tNebula, skyUv).rgb + starField(skyPx / uRatio);
       // The photon ring: light that has circled the hole, a thin bright band at its shadow's edge.
-      float ring = exp(-pow((b - 2.6) / max(0.05, 1.2 / hole.z), 2.0));
+      float ring = exp(-pow(abs(b - 2.6) / max(0.05, 1.2 / hole.z), 2.0));
       behind += uColourA * ring * (0.2 + 0.2 * uVistaParams.w);
     }
     // Far out the bending is slight: the lensed sky fades into the plain one, without a seam.
@@ -519,7 +521,7 @@ export const VISTA_GLSL = /* glsl */ `
         vec3 lit = surface * (max(dot(n, toStar), 0.0) * uColourA * 2.6 + 0.08);
         lit += uColourA * pow(1.0 - n.z, 3.0) * max(dot(normalize(q + vec2(0.0, 1e-4)), normalize(star.xy - w.xy + vec2(0.0, 1e-4))), 0.0) * 0.5;
         col = mix(col, lit, disc);
-        col += uAccent * exp(-pow((r - 1.35) / 0.07, 2.0)) * 0.12;
+        col += uAccent * exp(-pow(abs(r - 1.35) / 0.07, 2.0)) * 0.12;
       }
     }
     return col;
@@ -540,7 +542,7 @@ export const VISTA_GLSL = /* glsl */ `
     float disc = 1.0 - smoothstep(1.0 - 1.5 / hole.z, 1.0, r);
     col = mix(col, vec3(0.0), disc * (1.0 - gone));
     col += vec3(0.7, 0.45, 1.0) * exp(-max(r - 1.0, 0.0) * 0.9) * (0.1 + 0.06 * sin(uTime * 2.3)) * (1.0 - gone);
-    col += vec3(1.3, 1.2, 1.4) * exp(-pow((progress - 0.9) * 90.0, 2.0)) * exp(-r * 0.25) * 3.0;
+    col += vec3(1.3, 1.2, 1.4) * exp(-pow(abs(progress - 0.9) * 90.0, 2.0)) * exp(-r * 0.25) * 3.0;
     vec4 bang = uBodyB;
     if (bang.z > 0.0) {
       float age = bang.z;
@@ -581,7 +583,7 @@ export const VISTA_GLSL = /* glsl */ `
     vec3 dishAt = normalize(vec3(0.45, 0.5, 0.74));
     float dishAngle = acos(clamp(dot(t, dishAt), -1.0, 1.0));
     float dish = 1.0 - smoothstep(0.2, 0.215, dishAngle);
-    float rim = exp(-pow((dishAngle - 0.215) / 0.012, 2.0));
+    float rim = exp(-pow(abs(dishAngle - 0.215) / 0.012, 2.0));
     vec3 bowl = normalize(dishAt - t * 0.6);
     float light = max(dot(n, sun), 0.0);
     float bowlLight = max(dot(-bowl, sun), 0.0) * 0.8;
