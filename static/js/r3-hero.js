@@ -2075,7 +2075,7 @@ function start(hero, art) {
     if (nextVista.world) next = pickWorld({ fresh: true, name: nextVista.world });
     jump.world = next;
     jump.vista = nextVista;
-    if (jump.warm) jump.warm.material.dispose();
+    if (jump.warm) retire(jump.warm);
     jump.warm = null;
     if (nextVista.index !== skyMaterial.defines.VISTA) {
       const material = skyMaterial.clone();
@@ -2084,9 +2084,15 @@ function start(hero, art) {
       mesh.frustumCulled = false;
       const warmScene = new THREE.Scene();
       warmScene.add(mesh);
-      renderer.compileAsync(warmScene, postCamera).catch(() => {});
+      mesh.userData.compiled = renderer.compileAsync(warmScene, postCamera).catch(() => {}); // [r3:chart]
       jump.warm = mesh;
     }
+  }
+  // [r3:chart] A warm-up material is disposed only once its compile has settled: three.js polls the
+  // program until then, and a disposed one threw (instantly under reduced motion, where a jump swaps
+  // at once, and on any device slower to compile than the wind-up).
+  function retire(mesh) {
+    Promise.resolve(mesh.userData.compiled).then(() => requestAnimationFrame(() => mesh.material.dispose()));
   }
   function swapWorld() {
     jump.swapped = true;
@@ -2100,7 +2106,7 @@ function start(hero, art) {
     if (jump.warm) {
       const warm = jump.warm;
       jump.warm = null;
-      requestAnimationFrame(() => warm.material.dispose());
+      retire(warm); // [r3:chart]
     }
     // [r3:memory] The jump and the new world are remembered before the new fleet reads the memory.
     memory.record('jump');
