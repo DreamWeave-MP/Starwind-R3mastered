@@ -31,6 +31,7 @@ import { pickWorld, WORLDS } from './r3-worlds.js';
 import { pickVista, placeVista, VISTA_GLSL } from './r3-vistas.js';
 import { createFleet } from './r3-ships.js';
 import { pickScenario } from './r3-shipyard.js';
+import { createPilot } from './r3-pilot.js'; // [r3:pilot]
 
 const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -1268,6 +1269,26 @@ function start(hero, art) {
     pivot.scale.setScalar(jewelScale);
   }
 
+  // [r3:pilot] The jewel is the visitor's ship: r3-pilot.js flies it while it is steered, coasting or
+  // leading a jump, and has the sky notice it.
+  const hyperPoint = { x: 0, y: 0 };
+  const pilot = createPilot({
+    hero, scene, camera, jewelPx, starVelocity, reduceMotion, overText, overJewel, requestFrame,
+    getFleet: () => fleet,
+    jumping: () => jump.active,
+    accent,
+    hyperCenter: () => {
+      hyperPoint.x = skyUniforms.uHyperAt.value.x / ratio;
+      hyperPoint.y = height - skyUniforms.uHyperAt.value.y / ratio;
+      return hyperPoint;
+    },
+    onClick: () => {
+      beginSpin();
+      fleet.summon();
+      requestFrame();
+    },
+  });
+
   // The pointer: the jewel leans toward it and its lamp follows it; without one, both wander.
   const pointer = new THREE.Vector2();
   const eased = new THREE.Vector2();
@@ -1314,12 +1335,8 @@ function start(hero, art) {
       beginJump(body.world.name);
       return;
     }
-    const dx = event.clientX - bounds.left - jewelPx.x;
-    const dy = event.clientY - bounds.top - jewelPx.y;
-    if (dx * dx + dy * dy > (jewelPx.radius * 1.6) ** 2) return;
-    beginSpin();
-    fleet.summon();
-    requestFrame();
+    // [r3:pilot] A press on the jewel is the pilot's: a click calls the fleet, a drag flies it.
+    if (pilot.press(event, { x: event.clientX - bounds.left, y: event.clientY - bounds.top })) event.r3Taken = true;
   }, { passive: true });
 
   // Drag the planet, as the moon on the l3i site drags: the surface follows the pointer and keeps
@@ -1579,7 +1596,9 @@ function start(hero, art) {
 
     // The star drifts round the hero and bounces off its edges like an old screensaver, the point
     // that strikes a wall flashing. A hit square in a corner spins it and calls the fleet.
-    if (!reduceMotion) {
+    const piloted = pilot.fly(dt, width, height); // [r3:pilot] steered, coasting or leading a jump
+    if (piloted) anchor.set((jewelPx.x - width / 2) * perPixel, (height / 2 - jewelPx.y) * perPixel, 0);
+    if (!reduceMotion && !piloted) {
       const margin = jewelPx.radius * 1.25;
       jewelPx.x += starVelocity.x * dt;
       jewelPx.y += starVelocity.y * dt;
@@ -1636,7 +1655,10 @@ function start(hero, art) {
       THREE.MathUtils.clamp(aimX * 0.4, -0.38, 0.38) + Math.sin(t * 0.23) * 0.16,
       0,
     );
-    jewel.rotation.z = roll + Math.sin(t * 0.17) * 0.05;
+    jewel.rotation.z = roll + Math.sin(t * 0.17) * 0.05 + pilot.bank; // [r3:pilot] banks into turns
+    pivot.rotation.x += pilot.lean.x;
+    pivot.rotation.y += pilot.lean.y;
+    pilot.update(dt, pivot.position, jewelScale); // [r3:pilot] engine, trail, shield, hails
 
     // The camera drifts, as if on a slow orbit of its own.
     camera.position.set(Math.sin(t * 0.05) * 0.35, Math.sin(t * 0.07) * 0.18, 10);

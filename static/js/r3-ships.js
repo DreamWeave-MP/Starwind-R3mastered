@@ -1353,6 +1353,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
   }
 
   const velocities = new Map();
+  let escort = null; // [r3:pilot] r3-pilot.js's hook into each fighter's pass, set through kit.escort
   function updateFighters(dt) {
     if (!pass.active) {
       for (const fighter of allFighters) fighter.group.visible = false;
@@ -1386,6 +1387,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
         const right = new THREE.Vector3().crossVectors(heading, up).normalize();
         if (index === 1) tmp.addScaledVector(right, -0.9).addScaledVector(up, -0.3);
         if (flight.chasing) tmp.addScaledVector(right, 0.35 * Math.sin(clock * 2.2 + index * 2)).addScaledVector(up, 0.25 * Math.cos(clock * 1.7 + index));
+        if (escort) escort(fighter, tmp, heading, up, flight, index); // [r3:pilot] passes bent toward the player's jewel
         fighter.group.position.copy(tmp);
         fighter.group.scale.setScalar(0.55);
         orient(fighter.group, heading, up);
@@ -1439,6 +1441,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     now: () => clock,
     onDestroyed: (listener) => listeners.destroyed.push(listener),
     scenario, sides, visits,
+    escort: (hook) => { escort = hook; }, // [r3:pilot]
   };
 
   return {
