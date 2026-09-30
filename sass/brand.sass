@@ -260,6 +260,17 @@
   font-weight: 700
   font-size: .68rem
 
+// [r3:gunnery] On a phone the survey readout holds the top corner: the scope's readout goes below it,
+// its title and counts only.
+@media (max-width: 600px)
+  .r3-sensors__readout
+    top: 3.4rem
+    font-size: .54rem
+
+  .r3-sensors__note,
+  .r3-sensors__sides
+    display: none
+
 .r3-sensors__note,
 .r3-sensors__sides
   color: var(--dw-text-muted)
