@@ -13,6 +13,7 @@
 // patrol or the two at war, so the same few primitives make many different skies.
 
 import * as THREE from './vendor/three.module.min.js';
+import { arc170 } from './r3-shipyard-lore.js'; // [r3:lore]
 
 // Geometry --------------------------------------------------------------------------------------
 
@@ -343,7 +344,7 @@ function trifighter() {
   return { geometry: merge(parts), engines: [[0, 0, -0.13]], cannons: tips };
 }
 
-const FIGHTERS = { xwing, tie, awing, trifighter };
+const FIGHTERS = { xwing, tie, awing, trifighter, arc170 }; // [r3:lore] arc170
 
 export function buildFighter(kind) {
   return FIGHTERS[kind]();
@@ -361,7 +362,7 @@ export const FACTIONS = {
     capitals: [['wedge', 'Imperial-class · 1,600 m', IMPERIAL], ['wedge', 'Victory-class · 900 m', IMPERIAL], ['wedge', 'Tector-class · 1,600 m', IMPERIAL], ['wedge', 'Interdictor-class · 1,600 m', IMPERIAL]] },
   rebels: { name: 'Rebel Alliance', hull: '#b8bcc2', paint: '#b8321f', engine: '#ff7a52', laser: '#ff4a3a', fighters: ['xwing', 'awing'],
     capitals: [['organicCruiser', 'MC80 Liberty · 1,200 m'], ['organicCruiser', 'MC80A Home One · 1,300 m'], ['hammerhead', 'Sphyrna-class · 117 m']] },
-  republic: { name: 'Republic Navy', hull: '#cfccc4', paint: '#9a2a22', engine: '#8fd0ff', laser: '#5ab8ff', fighters: ['awing', 'xwing'],
+  republic: { name: 'Republic Navy', hull: '#cfccc4', paint: '#9a2a22', engine: '#8fd0ff', laser: '#5ab8ff', fighters: ['arc170'],
     capitals: [['wedge', 'Venator-class · 1,137 m', { half: 0.24, towers: 2 }], ['wedge', 'Acclamator I-class · 752 m', { half: 0.3 }]] },
   separatists: { name: 'Separatist Navy', hull: '#9a8a6a', paint: '#6e6a74', engine: '#7ab8ff', laser: '#ff5a3a', fighters: ['trifighter'],
     capitals: [['ringAndCore', 'Lucrehulk-class · 3,357 m']] },
