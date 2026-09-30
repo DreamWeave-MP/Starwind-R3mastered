@@ -618,7 +618,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
   // as a cruiser, and a hit lands on the shell just over the spot struck.
   function shieldFor(design, side) {
     const position = design.geometry.getAttribute('position');
-    const stride = Math.max(1, Math.floor(position.count / 1500));
+    const stride = Math.max(1, Math.floor(position.count / 700));
     const samples = [];
     for (let i = 0; i < position.count; i += stride) samples.push(new THREE.Vector3().fromBufferAttribute(position, i));
     const bounds = new THREE.Box3().setFromPoints(samples);
@@ -632,7 +632,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
       return furthest;
     };
     const margin = 0.03;
-    const geometry = new THREE.SphereGeometry(1, 64, 40);
+    const geometry = new THREE.SphereGeometry(1, 48, 30);
     const shell = geometry.getAttribute('position');
     const direction = new THREE.Vector3();
     const point = new THREE.Vector3();

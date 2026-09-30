@@ -393,6 +393,7 @@ const SKY_FRAGMENT = /* glsl */ `
     moonsOver = moon(moonsOver, px + uDrift * 12.0 * uRatio, uMoonB, uMoonColorB, sun);
     col = mix(moonsOver, col, onPlanet);
 
+    #if VISTA == 0 || VISTA == 7 || VISTA == 8
     if (r < 1.0 + airHeight * 5.0) {
       vec2 limbDir = r > 1e-4 ? q / r : vec2(0.0, 1.0);
       // How lit the air over this point of the limb is: past the terminator a little, since the
@@ -485,11 +486,11 @@ const SKY_FRAGMENT = /* glsl */ `
         }
 
         float solid = 1.0;
-        if (abs(uVista - 8.0) < 0.5) {
+        #if VISTA == 8
           vec4 station = deathStar(n, t, sun, footprint, uVistaParams.x > 0.5);
           surface = station.rgb;
           solid = station.a;
-        }
+        #endif
         col = mix(col, surface, onPlanet * solid);
       }
 
@@ -537,27 +538,29 @@ const SKY_FRAGMENT = /* glsl */ `
       }
     }
 
-    // The other backdrops.
-    if (uVista > 8.5) {
+    #endif
+
+    // The other backdrops, each compiled only into its own variant of this shader.
+    #if VISTA == 9
       col = heatDeath(px, col);
-    } else if (uVista > 0.5 && uVista < 6.5) {
-      if (uVista < 1.5) {
-        col = solarSystem(px, col);
-      } else if (uVista < 2.5) {
-        col = binary(px, col);
-      } else if (uVista < 3.5) {
-        col += starHalo(px, uBodyA, uColourA, uVistaParams.x);
-        vec4 face = starFace(px, uBodyA, uColourA, uVistaParams.x);
-        col = mix(col, face.rgb, face.a);
-      } else if (uVista < 4.5) {
-        col = dwarf(px, col);
-      } else {
-        bool lensed;
-        vec3 bent = blackHole(px, col, lensed);
-        if (lensed) col = bent;
-        if (uVista > 5.5) col += jets(px);
-      }
-    }
+    #elif VISTA == 1
+      col = solarSystem(px, col);
+    #elif VISTA == 2
+      col = binary(px, col);
+    #elif VISTA == 3
+      col += starHalo(px, uBodyA, uColourA, uVistaParams.x);
+      vec4 face = starFace(px, uBodyA, uColourA, uVistaParams.x);
+      col = mix(col, face.rgb, face.a);
+    #elif VISTA == 4
+      col = dwarf(px, col);
+    #elif VISTA == 5 || VISTA == 6
+      bool lensed;
+      vec3 bent = blackHole(px, col, lensed);
+      if (lensed) col = bent;
+      #if VISTA == 6
+        col += jets(px);
+      #endif
+    #endif
 
     // In hyperspace the planet is left behind, and a tunnel of blue light streams past.
     col = mix(sky, col, uHyper.y);
@@ -1038,6 +1041,8 @@ function start(hero, art) {
   };
   const ringNormal = skyUniforms.uRingNormal.value.clone();
   const skyMaterial = fullscreenMaterial(SKY_FRAGMENT, skyUniforms);
+  // Compiled once per backdrop, with only that backdrop's code (see VISTA_GLSL).
+  skyMaterial.defines = { VISTA: vista.index };
 
   const camera = new THREE.PerspectiveCamera(28, 1, 0.1, 60);
   camera.position.set(0, 0, 10);
@@ -1759,6 +1764,10 @@ function start(hero, art) {
     // The backdrop. The Death Star has no air, no sea, no rings and no aurora; the others take
     // their light from their own star.
     sky.uVista.value = vista.index;
+    if (skyMaterial.defines.VISTA !== vista.index) {
+      skyMaterial.defines.VISTA = vista.index;
+      skyMaterial.needsUpdate = true;
+    }
     sky.uVistaParams.value.set(vista.second ? 1 : 0, 0, 0, 0);
     sunColor.setRGB(1.0, 0.93, 0.82).multiplyScalar(1.6);
     if (vista.kind === 'deathStar') {
@@ -1790,11 +1799,12 @@ function start(hero, art) {
   // double-clicked, the ships jump away, the stars stretch into streaks down a tunnel of light,
   // and under a flash the view drops out over another world, with another fleet. Under reduced
   // motion a click swaps the world at once and nothing jumps on its own.
-  const jump = { active: false, age: 0, swapped: false, next: reduceMotion ? Infinity : 170 + Math.random() * 90 };
+  const jump = { active: false, age: 0, swapped: false, next: reduceMotion ? Infinity : 170 + Math.random() * 90, target: null, world: null, vista: null, warm: null };
   function beginJump(target = null) {
     if (jump.active) return;
     jump.target = typeof target === 'string' ? target : null;
     if (reduceMotion) {
+      chooseDestination();
       swapWorld();
       requestFrame();
       return;
@@ -1802,19 +1812,46 @@ function start(hero, art) {
     jump.active = true;
     jump.age = 0;
     jump.swapped = false;
+    chooseDestination();
     fleet.leave();
     requestFrame();
+  }
+  // Where the jump goes, picked as it begins, so the sky for it can compile in the background
+  // while the ships wind up: a world clicked in a solar system, or anywhere and any backdrop.
+  function chooseDestination() {
+    const target = jump.target;
+    jump.target = null;
+    let next = pickWorld({ fresh: true, exclude: world.name, name: target });
+    const nextVista = target ? { kind: 'planet', index: 0 } : pickVista(next.random, { fresh: true, exclude: vista.kind });
+    if (nextVista.world) next = pickWorld({ fresh: true, name: nextVista.world });
+    jump.world = next;
+    jump.vista = nextVista;
+    if (jump.warm) jump.warm.material.dispose();
+    jump.warm = null;
+    if (nextVista.index !== skyMaterial.defines.VISTA) {
+      const material = skyMaterial.clone();
+      material.defines = { VISTA: nextVista.index };
+      const mesh = new THREE.Mesh(postQuad.geometry, material);
+      mesh.frustumCulled = false;
+      const warmScene = new THREE.Scene();
+      warmScene.add(mesh);
+      renderer.compileAsync(warmScene, postCamera).catch(() => {});
+      jump.warm = mesh;
+    }
   }
   function swapWorld() {
     jump.swapped = true;
     fleet.dispose();
-    // A world clicked in a solar system is where the jump goes; otherwise anywhere, and any backdrop.
-    const target = jump.target;
-    jump.target = null;
-    let next = pickWorld({ fresh: true, exclude: world.name, name: target });
-    vista = target ? { kind: 'planet', index: 0 } : pickVista(next.random, { fresh: true, exclude: vista.kind });
-    if (vista.world) next = pickWorld({ fresh: true, name: vista.world });
-    applyWorld(next);
+    if (!jump.world) chooseDestination();
+    vista = jump.vista;
+    applyWorld(jump.world);
+    jump.world = null;
+    // The warm-up material held the new sky's program until the real one took it over.
+    if (jump.warm) {
+      const warm = jump.warm;
+      jump.warm = null;
+      requestAnimationFrame(() => warm.material.dispose());
+    }
     fleet = createFleet({ scene, camera, time, sunDir, sunColor, air, reduceMotion, overlay: art || hero, anisotropy: renderer.capabilities.getMaxAnisotropy(), random: world.random, scenario: pickScenario(world.random, { fresh: true }) });
     if (vista.kind === 'heatDeath') fleet.leave();
     starPlaced = true;
@@ -1898,6 +1935,12 @@ function start(hero, art) {
   });
 }
 
+// The hero starts once the page has painted and gone quiet, so building the scene and compiling its
+// shaders never holds up the page; the still in brand.sass shows until the first frame.
 const art = document.querySelector('[data-dw-hero-art]');
 const hero = art ? art.closest('.dw-hero') : null;
-if (hero) start(hero, art);
+if (hero) {
+  const begin = () => start(hero, art);
+  if ('requestIdleCallback' in window) requestAnimationFrame(() => requestIdleCallback(begin, { timeout: 800 }));
+  else setTimeout(begin, 100);
+}

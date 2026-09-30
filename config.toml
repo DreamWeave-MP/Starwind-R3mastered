@@ -61,7 +61,7 @@ goatcounter = "dreamweave-mp"
 # over a world picked at each load from static/js/r3-worlds.js.
 [extra.hero]
 script = "js/r3-hero.js"
-preload = ["js/vendor/three.module.min.js", "js/vendor/three.core.min.js", "js/r3-worlds.js", "js/r3-shipyard.js", "js/r3-ships.js"]
+preload = ["js/vendor/three.module.min.js", "js/vendor/three.core.min.js", "js/r3-worlds.js", "js/r3-vistas.js", "js/r3-shipyard.js", "js/r3-ships.js"]
 home = false
 projects = true
 

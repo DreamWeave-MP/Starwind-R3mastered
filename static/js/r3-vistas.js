@@ -3,7 +3,8 @@
 // its companion, a lone star, a dwarf, a black hole bending the sky round itself, a quasar, a
 // shipyard, or, very rarely, the Death Star.
 //
-// VISTA_GLSL is spliced into the sky shader. Each backdrop is drawn from a few uniforms that
+// VISTA_GLSL is spliced into the sky shader, which is compiled once per backdrop with VISTA
+// defined as its number, so only the backdrop showing is compiled. Each is drawn from uniforms that
 // placeVista() below works out from the hero's layout every frame: where its bodies are, how big,
 // what colour, and for a solar system where each world sits on its orbit.
 
@@ -196,6 +197,7 @@ export const VISTA_GLSL = /* glsl */ `
     return vec3(c * p.x + s * p.z, p.y, -s * p.x + c * p.z);
   }
 
+  #if VISTA >= 1 && VISTA <= 4
   // A star's face: darker toward the limb, boiling with granulation, spotted where it is active and
   // brighter round the spots. Its detail fades where it would be finer than a pixel.
   vec4 starFace(vec2 px, vec4 body, vec3 colour, float activity) {
@@ -233,6 +235,9 @@ export const VISTA_GLSL = /* glsl */ `
     return colour * (corona * 0.55 + prominence * 1.6 + exp(-h / 220.0) * 0.06);
   }
 
+  #endif
+
+  #if VISTA == 4
   // A dwarf: a red one flaring, a white one tiny and fierce inside the shell of gas it threw off,
   // or a brown one, banded and dim.
   vec3 dwarf(vec2 px, vec3 col) {
@@ -276,6 +281,9 @@ export const VISTA_GLSL = /* glsl */ `
     return col;
   }
 
+  #endif
+
+  #if VISTA == 2
   // A binary: a giant drawn out toward its small hot companion, and the stream of gas it loses
   // curling round into the disc about the companion. Whichever is nearer is drawn over the other.
   vec3 companion(vec2 px, vec4 a, vec4 b, vec2 axis, float apart, vec3 col) {
@@ -330,6 +338,9 @@ export const VISTA_GLSL = /* glsl */ `
     return mix(col, giant.rgb, giant.a);
   }
 
+  #endif
+
+  #if VISTA == 5 || VISTA == 6
   // The accretion disc's axis: nearly square to the line of sight, so the disc is seen nearly edge
   // on, tipped toward the viewer by the tilt and turned by the roll.
   vec3 discNormal() {
@@ -444,6 +455,9 @@ export const VISTA_GLSL = /* glsl */ `
     return colour * beam * (0.6 + knots) * nearSide * 1.3;
   }
 
+  #endif
+
+  #if VISTA == 1
   // A solar system as an orrery: the star, each world's orbit traced as a faint dashed ellipse in
   // the site's cyan, an asteroid belt on one of them, and the worlds themselves, lit from the star,
   // passing behind it on the far side of their orbits.
@@ -503,6 +517,9 @@ export const VISTA_GLSL = /* glsl */ `
     return col;
   }
 
+  #endif
+
+  #if VISTA == 9
   // The heat death: what is left after the stars (dimmed and put out in the star field itself) is a
   // small black hole, glowing faintly as it evaporates, until it goes with a last flash. A click
   // starts it all again: a point of light blowing out into a fireball, white-hot, cooling through
@@ -533,6 +550,9 @@ export const VISTA_GLSL = /* glsl */ `
     return col;
   }
 
+  #endif
+
+  #if VISTA == 8
   // The Death Star's surface, for the planet's disc: grey plating in rectangles, the equatorial
   // trench, the superlaser's dish in the northern hemisphere, and lights across the dark side. The
   // second one is unfinished: past a ragged edge only its skeleton stands against the stars.
@@ -577,4 +597,5 @@ export const VISTA_GLSL = /* glsl */ `
     }
     return vec4(surface, built);
   }
+  #endif
 `;
