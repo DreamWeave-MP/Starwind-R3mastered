@@ -1016,6 +1016,10 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     return { element, label, status, pips };
   }
   // Fits a contact to points of an object, as the camera sees them.
+  // [r3:qa] Adds or removes a class only if that changes it; classList always writes the attribute.
+  function mark(element, name, on) {
+    if (element.classList.contains(name) !== on) element.classList.toggle(name, on);
+  }
   function frame(contact, object, points, age) {
     object.updateMatrixWorld(true);
     camera.updateMatrixWorld();
@@ -1032,10 +1036,15 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     }
     const lock = Math.min(1, age / 0.6);
     const pad = 8 + 70 * Math.pow(1 - lock, 2);
-    contact.element.style.transform = `translate(${(left - pad).toFixed(1)}px, ${(top - pad).toFixed(1)}px)`;
-    contact.element.style.width = `${(right - left + pad * 2).toFixed(1)}px`;
-    contact.element.style.height = `${(bottom - top + pad * 2).toFixed(1)}px`;
-    contact.element.classList.add('is-locked');
+    // [r3:qa] Written only when they change: a style or class write, even of the same value, is a
+    // mutation the page has to process, and this runs for every contact every frame.
+    const transform = `translate(${(left - pad).toFixed(1)}px, ${(top - pad).toFixed(1)}px)`;
+    const width = `${(right - left + pad * 2).toFixed(1)}px`;
+    const height = `${(bottom - top + pad * 2).toFixed(1)}px`;
+    if (contact.transform !== transform) contact.element.style.transform = contact.transform = transform;
+    if (contact.width !== width) contact.element.style.width = contact.width = width;
+    if (contact.height !== height) contact.element.style.height = contact.height = height;
+    mark(contact.element, 'is-locked', true);
     // [r3:stage] The readout under the brackets stays on the stage: where it would run off the
     // right edge it moves left of them, and never left of the stage. Its width is estimated from
     // the label's length (about 7px a character), so nothing is measured each frame.
@@ -1471,7 +1480,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
   // Damage burns while the ship cruises: its engines trail fire, its hangar pops with secondaries,
   // and its brackets' readout fades after a hit.
   function burnDamage(visit, dt) {
-    if (clock > visit.statusUntil) visit.contact.element.classList.remove('is-announcing');
+    if (clock > visit.statusUntil) mark(visit.contact.element, 'is-announcing', false); // [r3:qa] runs every frame
     if (reduceMotion) return;
     const engines = visit.systems.engines;
     if (engines > 0 && clock >= visit.nextEmber) {
