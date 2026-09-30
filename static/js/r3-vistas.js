@@ -401,8 +401,10 @@ export const VISTA_GLSL = /* glsl */ `
     vec3 closest = p + d * along;
     float r = length(closest) / body.w;
     if (r < 0.995) return vec3(0.0);
-    vec3 c = closest / max(length(closest), 1e-6);
     float h = (r - 1.0) * radiusPx;
+    // Far out only the faint glow is left, and the noise is not worth reading.
+    if (h > 260.0) return colour * exp(-h / 220.0) * 0.06;
+    vec3 c = closest / max(length(closest), 1e-6);
     float streamers = 0.55 + 0.45 * fbm3Lite(c * 3.0 + vec3(seed, h * 0.006 - uTime * 0.012, 0.0));
     float corona = exp(-h / 45.0) * streamers;
     float loops = smoothstep(0.62, 0.82, fbm3Lite(c * max(14.0, radiusPx * 0.08) + vec3(seed * 3.0, uTime * 0.04 + h * 0.03, 0.0)));
@@ -570,11 +572,12 @@ export const VISTA_GLSL = /* glsl */ `
   }
 
   // The disc's gas at an angle round the hole and a radius (in its radii): streaks drawn out along
-  // the orbit, their lanes warped by a second noise, so the shear reads as turbulence.
+  // the orbit, their lanes warped by a second noise, so the shear reads as turbulence. Four
+  // lookups, since each crossing of the disc reads it twice.
   float discGas(float angle, float radius, float seed) {
     vec3 p = vec3(cos(angle) * 2.2, sin(angle) * 2.2, radius * 1.7 + seed);
-    vec3 warp = vec3(fbm3Lite(p * 1.3 + seed), fbm3Lite(p * 1.3 + seed + 5.1), fbm3Lite(p * 1.3 - seed));
-    return fbm3(vec3(p.xy, p.z * 3.2) + (warp - 0.5) * 1.6);
+    float warp = noise3(p * 1.3 + seed) - 0.5;
+    return fbm3Lite(vec3(p.xy, p.z * 3.2) + vec3(warp * 1.6, -warp * 1.1, warp * 2.4));
   }
 
   // Clumps of gas falling in: each spirals from the disc's rim to its inner edge over nine seconds,
@@ -643,7 +646,8 @@ export const VISTA_GLSL = /* glsl */ `
         break;
       }
       float stepLength = clamp(0.06 * r * r / (1.0 + r), 0.03, 1.6);
-      vec3 acceleration = -1.5 * h2 * pos / pow(r, 5.0);
+      float r2 = r * r;
+      vec3 acceleration = -1.5 * h2 * pos / (r2 * r2 * r);
       vec3 before = pos;
       vel += acceleration * stepLength;
       pos += vel * stepLength;
