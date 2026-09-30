@@ -226,6 +226,13 @@ const SKY_FRAGMENT = /* glsl */ `
   uniform vec3 uBetaR;      // Rayleigh scattering at the ground, per planet radius, per channel
   uniform float uBetaM;     // Mie scattering at the ground, the same for every channel
   uniform vec3 uAirShape;   // the Rayleigh and Mie scale heights, and the shell's top
+  // [r3:howard] The uncharted world's face: albedo with its mask, relief, and where on the body.
+  uniform sampler2D tFace;
+  uniform sampler2D tFaceRelief;
+  uniform vec4 uFace;       // strength, size in tangent units, the eyes' offset x and y
+  uniform vec3 uFaceRight;
+  uniform vec3 uFaceUp;
+  uniform vec3 uFaceCentre;
   ${NOISE}
 
   // The atmosphere, scattered for real: a shell of air over the planet, thinning exponentially
@@ -426,6 +433,32 @@ const SKY_FRAGMENT = /* glsl */ `
         float high = smoothstep(uWorldA.x + 0.08, uWorldA.x + 0.26, elevation) * land;
         vec3 ground = mix(uLand, uHighland, high) * (0.8 + 0.4 * fbm3Filtered(ts * 9.0 * scale, footprint * 9.0 * scale));
         vec3 albedo = mix(uLowland * (0.85 + 0.3 * fbm3Filtered(ts * 4.0 + 2.0, footprint * 4.0)), ground, land);
+        // [r3:howard] A face, painted on the body where the framing shows it, projected straight
+        // on from its centre. Its relief tips the normal, so the terminator throws the brow's,
+        // the nose's and the cheekbones' shadows; its eyes shift a little toward the pointer.
+        vec3 faceNormal = n;
+        float faceMask = 0.0;
+        if (uFace.x > 0.001) {
+          float faceFront = dot(t, uFaceCentre);
+          vec2 faceUv = vec2(dot(t, uFaceRight), dot(t, uFaceUp)) / uFace.y * 0.5 + 0.5;
+          float faceLod = log2(max(footprint / uFace.y * 0.5 * 512.0, 1.0));
+          vec2 faceEyeL = (faceUv - vec2(0.3633, 0.4567)) / vec2(0.06, 0.03);
+          vec2 faceEyeR = (faceUv - vec2(0.62, 0.4567)) / vec2(0.06, 0.03);
+          float faceInEye = max(1.0 - smoothstep(0.45, 1.0, length(faceEyeL)), 1.0 - smoothstep(0.45, 1.0, length(faceEyeR)));
+          vec4 faceSkin = textureLod(tFace, faceUv - uFace.zw * faceInEye, faceLod);
+          float faceInside = step(0.0, faceUv.x) * step(faceUv.x, 1.0) * step(0.0, faceUv.y) * step(faceUv.y, 1.0);
+          faceMask = faceSkin.a * uFace.x * smoothstep(0.05, 0.3, faceFront) * faceInside;
+          albedo = mix(albedo, faceSkin.rgb, faceMask);
+          land = max(land, faceMask);
+          float faceStep = 1.0 / 256.0;
+          float faceReliefLod = max(faceLod - 1.0, 0.0);
+          float faceHx = textureLod(tFaceRelief, faceUv + vec2(faceStep, 0.0), faceReliefLod).r - textureLod(tFaceRelief, faceUv - vec2(faceStep, 0.0), faceReliefLod).r;
+          float faceHy = textureLod(tFaceRelief, faceUv + vec2(0.0, faceStep), faceReliefLod).r - textureLod(tFaceRelief, faceUv - vec2(0.0, faceStep), faceReliefLod).r;
+          vec3 faceTipped = t - (uFaceRight * faceHx + uFaceUp * faceHy) * (2.4 * faceMask / max(uFace.y, 0.05));
+          faceTipped *= inversesqrt(max(dot(faceTipped, faceTipped), 1e-6));
+          // Back to view space: the body's rotation, transposed.
+          faceNormal = faceTipped * uBody;
+        }
         float cloud = fbm3Filtered(tcs * vec3(3.2, 7.5, 3.2) + vec3(uTime * 0.006, 0.0, 0.0), footprint * 7.5);
         float fluff = footprint * 7.5 * 0.5;
         cloud = smoothstep(uWorldA.y - fluff, uWorldA.y + 0.22 + fluff, cloud);
@@ -456,7 +489,7 @@ const SKY_FRAGMENT = /* glsl */ `
         }
         albedo = mix(albedo, uCloud, cloud * 0.85);
 
-        float ndl = dot(n, sun);
+        float ndl = dot(faceNormal, sun); // [r3:howard] n, or the face's relief
         float day = smoothstep(-0.06, 0.3, ndl);
         // The sunlight that reaches the ground has crossed the air, reddening toward the terminator.
         vec3 sunlight = uSunColor * sunlightAt(n * 1.0005, sun);
@@ -471,6 +504,8 @@ const SKY_FRAGMENT = /* glsl */ `
         // their edges roll through the highlight.
         float glint = pow(max(dot(n, h), 0.0), 120.0) * 1.8 + pow(max(dot(n, h), 0.0), 20.0) * 0.1;
         lit += sunlight * glint * water * day * uWorldC.x;
+        // [r3:howard] Skin's sheen, soft and broad.
+        lit += sunlight * pow(max(dot(faceNormal, h), 0.0), 22.0) * 0.1 * faceMask * day;
 
         // The night side: the planet's own dark teal, with its continents and cloud lit faintly by
         // the cyan nebula above, and the cities of the populous land glittering, so the turning
@@ -482,7 +517,9 @@ const SKY_FRAGMENT = /* glsl */ `
         float habitable = mix(land * (1.0 - ice), 1.0, uWorldB.w) * (1.0 - uWorldB.z);
         float cities = cityLights(t, 0.3 + 0.5 * settled, footprint * 55.0) * habitable * populous * step(0.001, settled);
         cities *= (1.0 - 0.85 * cloud) * smoothstep(0.06, 0.3, z);
+        cities *= 1.0 - 0.8 * faceMask; // [r3:howard] the face stays dark at night, mostly
         night += uCity * cities * 1.25;
+        night += albedo * faceMask * 0.07; // [r3:howard] it can be seen in the dark, just
         vec3 surface = mix(night, lit, day);
 
         // Lava: rifts that glow by day and night alike.
@@ -946,6 +983,7 @@ function start(hero, art) {
   // What lies behind: a planet, most visits, or one of the other backdrops (r3-vistas.js). A
   // shipyard orbits its own world.
   let vista = pickVista(world.random);
+  if (world.face) vista = { kind: 'planet', index: 0, seed: 0 }; // [r3:howard] it only happens to a planet
   if (vista.world) world = pickWorld({ name: vista.world });
   const planetLike = () => vista.kind === 'planet' || vista.kind === 'shipyard' || vista.kind === 'deathStar';
   let systemWorlds = [];
@@ -1015,6 +1053,13 @@ function start(hero, art) {
     uSunColor: { value: sunColor },
     uBody: { value: new THREE.Matrix3() },
     uCloudBody: { value: new THREE.Matrix3() },
+    // [r3:howard]
+    tFace: { value: null },
+    tFaceRelief: { value: null },
+    uFace: { value: new THREE.Vector4(0, 0.6, 0, 0) },
+    uFaceRight: { value: new THREE.Vector3(1, 0, 0) },
+    uFaceUp: { value: new THREE.Vector3(0, 1, 0) },
+    uFaceCentre: { value: new THREE.Vector3(0, 0, 1) },
     uAccent: { value: accent },
     uNight: { value: night },
     uAir: { value: air },
@@ -1599,6 +1644,7 @@ function start(hero, art) {
     dragInverse.makeRotationFromQuaternion(turned).invert();
     spinMatrix.makeRotationY(t * PLANET_SPIN * world.spin + world.phase).multiply(alignAxis).multiply(dragInverse).multiply(orbit.matrix); // [r3:navigator]
     skyUniforms.uBody.value.setFromMatrix4(spinMatrix);
+    if (world.face) placeFace(dt); // [r3:howard]
     skyUniforms.uRingNormal.value.copy(ringNormal).applyQuaternion(turned).applyQuaternion(orbit.inverse); // [r3:navigator]
     spinMatrix.makeRotationY(t * PLANET_SPIN * world.spin * 1.35 + world.phase * 1.7 + 0.8).multiply(alignAxis).multiply(dragInverse).multiply(orbit.matrix); // [r3:navigator]
     skyUniforms.uCloudBody.value.setFromMatrix4(spinMatrix);
@@ -1833,7 +1879,106 @@ function start(hero, art) {
   });
 
   // The world: everything that depends on it, set in place, so a jump can swap it for another.
+  // [r3:howard] The uncharted world's face: its textures load only when it happens, and it is
+  // placed on the body where this framing shows the most of the disc, sized to fit.
+  const faceState = { textures: null, strength: 0, placedFor: '' };
+  const faceSample = new THREE.Vector3();
+  const faceView = { centre: new THREE.Vector3(), up: new THREE.Vector3(), right: new THREE.Vector3() };
+  function faceTextures() {
+    if (faceState.textures) return faceState.textures;
+    const loader = new THREE.TextureLoader();
+    const load = (file) => loader.load(new URL(`../img/${file}`, import.meta.url).href, (texture) => { texture.userData.ready = true; });
+    const albedo = load('r3-uncharted.webp');
+    albedo.colorSpace = THREE.SRGBColorSpace;
+    const relief = load('r3-uncharted-relief.webp');
+    for (const texture of [albedo, relief]) {
+      texture.wrapS = texture.wrapT = THREE.ClampToEdgeWrapping;
+      texture.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+    }
+    faceState.textures = { albedo, relief };
+    return faceState.textures;
+  }
+  function placeFace(dt) {
+    const key = `${planet.x}|${planet.y}|${planet.radius}|${width}|${height}`;
+    if (key !== faceState.placedFor) {
+      faceState.placedFor = key;
+      // The visible disc: points of the hero on the planet and clear of the text, as normals.
+      const text = textBox(hero);
+      const bounds = hero.getBoundingClientRect();
+      const centre = faceView.centre.set(0, 0, 0);
+      const points = [];
+      for (let i = 0; i <= 28; i++) {
+        for (let j = 0; j <= 14; j++) {
+          const x = (i / 28) * width;
+          const yDown = (j / 14) * height;
+          if (text && x + bounds.left > text.left - 20 && x + bounds.left < text.right + 20 && yDown + bounds.top > text.top - 20 && yDown + bounds.top < text.bottom + 20) continue;
+          const qx = (x - planet.x) / planet.radius;
+          const qy = (height - yDown - planet.y) / planet.radius;
+          const r2 = qx * qx + qy * qy;
+          if (r2 > 0.94) continue;
+          faceSample.set(qx, qy, Math.sqrt(1 - r2));
+          points.push(faceSample.clone());
+          centre.add(faceSample);
+        }
+      }
+      if (centre.lengthSq() < 1e-6) centre.set(0, 0.6, 0.8);
+      centre.normalize();
+      const up = faceView.up.set(0, 1, 0).addScaledVector(centre, -centre.y);
+      if (up.lengthSq() < 1e-6) up.set(0, 0, -1);
+      up.normalize();
+      const right = faceView.right.crossVectors(up, centre).normalize();
+      // What shows, measured across and up from there; the face is centred in it and fitted
+      // inside, a little taller than wide, so it is never cut by the hero's edges.
+      let left = 0;
+      let rightmost = 0;
+      let low = 0;
+      let high = 0;
+      for (const point of points) {
+        const across = point.dot(right);
+        const along = point.dot(up);
+        left = Math.min(left, across);
+        rightmost = Math.max(rightmost, across);
+        low = Math.min(low, along);
+        high = Math.max(high, along);
+      }
+      const midAcross = (left + rightmost) / 2;
+      const midAlong = (low + high) / 2;
+      centre.addScaledVector(right, midAcross).addScaledVector(up, midAlong).normalize();
+      up.set(0, 1, 0).addScaledVector(centre, -centre.y);
+      if (up.lengthSq() < 1e-6) up.set(0, 0, -1);
+      up.normalize();
+      right.crossVectors(up, centre).normalize();
+      let size = THREE.MathUtils.clamp(Math.min((rightmost - left) / 2 * 0.98, (high - low) / 2 * 1.1), 0.16, 0.9);
+      // A near-flat horizon shows only a band of the disc: there the face is large and peeks over
+      // it, eyes and brow above the line, the rest below.
+      if (high - low < 0.45 * (rightmost - left)) {
+        size = THREE.MathUtils.clamp((rightmost - left) * 0.32, 0.2, 0.9);
+        centre.addScaledVector(up, -(0.2 * size + (high - low) * 0.15)).normalize();
+        up.set(0, 1, 0).addScaledVector(centre, -centre.y).normalize();
+        right.crossVectors(up, centre).normalize();
+      }
+      const body = skyUniforms.uBody.value;
+      skyUniforms.uFaceCentre.value.copy(centre).applyMatrix3(body).normalize();
+      skyUniforms.uFaceUp.value.copy(up).applyMatrix3(body).normalize();
+      skyUniforms.uFaceRight.value.copy(right).applyMatrix3(body).normalize();
+      skyUniforms.uFace.value.y = size;
+    }
+    const textures = faceTextures();
+    skyUniforms.tFace.value = textures.albedo;
+    skyUniforms.tFaceRelief.value = textures.relief;
+    const ready = textures.albedo.userData.ready && textures.relief.userData.ready;
+    faceState.strength = ready ? (reduceMotion ? 1 : Math.min(1, faceState.strength + dt * 0.6)) : 0;
+    skyUniforms.uFace.value.x = faceState.strength;
+    // The eyes, a little toward the pointer: too little to prove.
+    skyUniforms.uFace.value.z = drift.value.x * 0.012;
+    skyUniforms.uFace.value.w = drift.value.y * 0.006;
+  }
+
   function applyWorld(next) {
+    // [r3:howard] A face stays with its world.
+    skyUniforms.uFace.value.x = 0;
+    faceState.strength = 0;
+    faceState.placedFor = '';
     world = next;
     air.copy(worldColor(world.air)).lerp(accent, 0.25).multiplyScalar(0.9);
     const nebula = nebulaMaterial.uniforms;
@@ -1926,7 +2071,7 @@ function start(hero, art) {
     const target = jump.target;
     jump.target = null;
     let next = pickWorld({ fresh: true, exclude: world.name, name: target });
-    const nextVista = target ? { kind: 'planet', index: 0 } : pickVista(next.random, { fresh: true, exclude: vista.kind });
+    const nextVista = target || next.face ? { kind: 'planet', index: 0 } : pickVista(next.random, { fresh: true, exclude: vista.kind }); // [r3:howard] next.face
     if (nextVista.world) next = pickWorld({ fresh: true, name: nextVista.world });
     jump.world = next;
     jump.vista = nextVista;
