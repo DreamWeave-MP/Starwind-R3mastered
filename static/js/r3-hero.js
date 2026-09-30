@@ -979,7 +979,7 @@ function start(hero, art) {
   survey.className = 'r3-survey';
   survey.setAttribute('aria-hidden', 'true');
   survey.title = 'Jump to hyperspace';
-  hero.append(survey); // [r3:stage] its own band under the stage, beside the facts (brand.sass)
+  hero.append(survey); // [r3:stage] in the band above the stage, under the facts (brand.sass)
   let nav = null; // [r3:chart] the flight computer, made once the fleet is
   function showSurvey() {
     survey.replaceChildren();

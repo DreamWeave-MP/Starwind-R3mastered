@@ -795,61 +795,127 @@
     -webkit-user-select: none
     -webkit-touch-callout: none
 
-// [r3:stage] The live hero in three bands, so nothing of the page sits over the simulation and
-// nothing of it gets in the page's way: the words on top, on the page's own background; the stage,
-// which is the simulation's alone; then the survey readout and the facts. The template's markup
-// stays; its grid dissolves (display: contents) so its children can take the bands, and
-// static/js/r3-hero.js puts the readout in its own. Without JavaScript the still fills the stage.
+// [r3:stage] The live hero in two parts, so nothing of the page sits over the simulation and
+// nothing of it gets in the page's way: one short band on top, on the page's own background, then
+// the stage, which is the simulation's alone, down to the page. In the band the words read down the
+// left (kicker, title, summary) and what you can do reads down the right (the facts in a line, the
+// buttons, the survey readout). The template's markup stays; its grids dissolve (display:
+// contents) so their children can take their places, and static/js/r3-hero.js adds the readout.
+// Without JavaScript the still fills the stage.
 $r3-inset: max(var(--dw-gutter), calc((100% - var(--dw-width-page)) / 2 + var(--dw-gutter)))
+$r3-band: clamp(.8rem, .5rem + .9vw, 1.3rem)
 
 .dw-hero.dw-hero--art
   display: grid
-  grid-template-columns: minmax(0, 1fr)
-  grid-template-areas: "words" "stage" "survey" "facts"
+  grid-template-columns: $r3-inset minmax(0, 1fr) minmax(0, auto) $r3-inset
+  grid-template-rows: auto auto auto auto
+  grid-template-areas: ". kicker facts ." ". title actions ." ". summary survey ." "stage stage stage stage"
+  column-gap: clamp(1.5rem, 4vw, 4rem)
+  row-gap: .35rem
   padding: 0
   background: linear-gradient(180deg, var(--dw-bg-1), var(--dw-bg-0))
   touch-action: auto
 
-  > .dw-hero__grid
+  > .dw-hero__grid,
+  .dw-hero__text
     display: contents
 
-  .dw-hero__text
-    grid-area: words
-    margin-inline: $r3-inset
-    padding-block: clamp(1rem, .6rem + 1.4vw, 2rem) clamp(.9rem, .6rem + .8vw, 1.25rem)
+  .dw-kicker
+    grid-area: kicker
+    align-self: end
+    margin: $r3-band 0 0
 
-    .dw-hero__title
-      margin-bottom: var(--dw-space-2)
+  .dw-hero__title
+    grid-area: title
+    align-self: center
+    margin: 0
+    font-size: clamp(1.9rem, 1.35rem + 1.7vw, 2.8rem)
 
-    .dw-hero__summary
-      margin-bottom: var(--dw-space-4)
+  .dw-hero__summary
+    grid-area: summary
+    align-self: start
+    max-width: 64ch
+    margin: 0 0 $r3-band
+
+  // The facts as one quiet line, not a card.
+  .dw-strip
+    grid-area: facts
+    align-self: end
+    justify-self: end
+    display: flex
+    flex-wrap: wrap
+    gap: .2rem 1rem
+    margin: $r3-band 0 0
+    border: 0
+    padding: 0
+    background: none
+    box-shadow: none
+
+    > div
+      display: flex
+      gap: .45rem
+      align-items: baseline
+      border: 0
+      padding: 0
+
+    dt, dd
+      margin: 0
+      font-size: var(--dw-step--2)
+
+  .dw-actions
+    grid-area: actions
+    align-self: center
+    justify-self: end
+    justify-content: flex-end
+    margin: 0
+
+  > .r3-survey
+    grid-area: survey
+    position: static
+    align-self: start
+    justify-self: end
+    justify-content: flex-end
+    max-width: 25rem
+    margin: 0 0 $r3-band
+    text-align: right
+    text-shadow: none
 
   .dw-hero__art
     grid-area: stage
     position: relative
     inset: auto
     z-index: 0
-    // As tall as it can be while the survey readout under it stays on a laptop's first screen.
-    height: clamp(380px, min(62vh, 100vh - 24rem), 780px)
+    // Down to the foot of a laptop's first screen, under the band above it.
+    height: clamp(380px, 100vh - 15rem, 840px)
     overflow: hidden
-    border-block: 1px solid var(--dw-line)
+    border-top: 1px solid var(--dw-line)
     // The planet and the orbit take sideways drags; vertical swipes still scroll the page.
     touch-action: pan-y pinch-zoom
 
-    @media (max-width: 760px)
-      height: clamp(340px, min(62svh, 100svh - 29rem), 640px)
+  // Narrow: the band reads straight down, the facts and the readout sharing its last lines.
+  @media (max-width: 900px)
+    grid-template-columns: $r3-inset minmax(0, 1fr) $r3-inset
+    grid-template-rows: auto
+    grid-template-areas: ". kicker ." ". title ." ". summary ." ". actions ." ". facts ." ". survey ." "stage stage stage"
 
-  > .r3-survey
-    grid-area: survey
-    position: static
-    justify-content: flex-start
-    max-width: none
-    margin: .75rem $r3-inset 0
-    text-shadow: none
+    .dw-hero__summary
+      margin-bottom: .35rem
 
-  .dw-strip
-    grid-area: facts
-    margin: .75rem $r3-inset clamp(1.5rem, 1rem + 2vw, 2.5rem)
+    .dw-strip,
+    .dw-actions,
+    > .r3-survey
+      justify-self: start
+      justify-content: flex-start
+      text-align: left
+
+    .dw-strip
+      margin: .2rem 0 0
+
+    > .r3-survey
+      max-width: none
+
+    .dw-hero__art
+      height: clamp(340px, 70svh, 640px)
 
   // The still, in the stage: the stars and the sky on one layer, the planet's edge on the other,
   // cut at the stage's foot. The live canvas fades in over them and they leave.
