@@ -359,7 +359,8 @@ export const FACTIONS = {
 };
 
 // An era's two sides.
-const ERAS = [['rebels', 'empire'], ['republic', 'separatists'], ['resistance', 'firstOrder'], ['oldRepublic', 'sith']];
+// [r3:memory] Exported for r3-memory.js's steering.
+export const ERAS = [['rebels', 'empire'], ['republic', 'separatists'], ['resistance', 'firstOrder'], ['oldRepublic', 'sith']];
 
 // This load's scenario: one side on patrol, or two sides at war, when the capital ships fight and the
 // fighters meet in dogfights. After a jump the address no longer counts (fresh).

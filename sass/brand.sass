@@ -163,6 +163,18 @@
   &.is-lost
     color: #ff6a5a
 
+  // [r3:memory] A navy with a grudge: hostile, the brackets shut hard and burn. A side the viewer
+  // helped: friendly, in the green of a transponder that answers.
+  &.is-hostile
+    color: #ff4a3a
+    filter: drop-shadow(0 0 4px rgb(255 60 40 / 60%))
+
+    &.is-locked
+      opacity: 1
+
+  &.is-friendly
+    color: #6aff9a
+
   @media (forced-colors: active)
     display: none
 

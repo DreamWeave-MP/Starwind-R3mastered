@@ -206,7 +206,7 @@ export function steerScenario(scenario, memory, random, eras, { force = false } 
   try {
     const known = eras.flat();
     const worst = known.reduce((best, key) => (memory.hostility(key) > memory.hostility(best) ? key : best), known[0]);
-    if (memory.hostility(worst) >= HOSTILE && (force || random() < 0.6)) return { war: false, sides: [worst] };
+    if (memory.hostility(worst) >= HOSTILE && (force || random() < 0.75)) return { war: false, sides: [worst] };
     const dearest = known.reduce((best, key) => (memory.goodwill(key) > memory.goodwill(best) ? key : best), known[0]);
     if (memory.goodwill(dearest) >= FRIENDLY && (force || random() < 0.35)) {
       const era = eras.find((pair) => pair.includes(dearest));
