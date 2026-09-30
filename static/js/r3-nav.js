@@ -241,6 +241,7 @@ export function createNav({ stage, survey, jumpTo, live = () => ({}), reduceMoti
     const box = root.getBoundingClientRect();
     const scale = Math.max(0.3, Math.min(box.width / 200, Math.max(40, box.height - 70) / 108));
     const u = 1 / scale;
+    const compact = box.width < 600;
     const svg = element('svg', { class: 'r3-chart__map', viewBox: '-100 -54 200 108', preserveAspectRatio: 'xMidYMid meet' });
     const defs = element('defs', {}, svg);
     const glow = element('radialGradient', { id: 'r3-chart-core' }, defs);
@@ -256,15 +257,54 @@ export function createNav({ stage, survey, jumpTo, live = () => ({}), reduceMoti
         const angle = arm * Math.PI / 2 + reach * 2.4;
         points.push(`${(Math.cos(angle) * reach * 92).toFixed(2)},${(Math.sin(angle) * reach * 46).toFixed(2)}`);
       }
-      element('polyline', { class: 'r3-chart__arm', points: points.join(' '), 'stroke-width': (9 * scale > 40 ? 9 : 7).toString() }, svg);
+      // A soft band with a bright spine, so an arm reads as a lane of stars rather than a stroke.
+      element('polyline', { class: 'r3-chart__arm', points: points.join(' '), 'stroke-width': (18 * u).toFixed(2) }, svg);
+      element('polyline', { class: 'r3-chart__arm r3-chart__arm--spine', points: points.join(' '), 'stroke-width': (1.1 * u).toFixed(3) }, svg);
     }
+    // Labels take the room they need, in screen pixels (map units times scale): the regions' names
+    // first, then each stop's, which moves round its dot until it overlaps nothing already placed.
+    const taken = [];
+    const overlaps = (box) => taken.some((other) => box.x0 < other.x1 && box.x1 > other.x0 && box.y0 < other.y1 && box.y1 > other.y0);
+    // Stops too close to tell apart are eased apart: a few rounds of pushing each pair to 16 pixels.
+    const positions = new Map(unique.map((id) => [id, place(chart.nodes[id])]));
+    const apart = 16 * u;
+    for (let round = 0; round < 8; round++) {
+      let moved = false;
+      for (const a of unique) for (const b of unique) {
+        if (a >= b) continue;
+        const pa = positions.get(a);
+        const pb = positions.get(b);
+        let dx = pb.x - pa.x;
+        let dy = (pb.y - pa.y) * 2;
+        let gap = Math.hypot(dx, dy);
+        if (gap >= apart) continue;
+        if (gap < 1e-6) {
+          dx = Math.cos(hash(a + b) * Math.PI * 2);
+          dy = Math.sin(hash(a + b) * Math.PI * 2);
+          gap = 1;
+        }
+        const push = (apart - gap) / 2 / gap;
+        pa.x -= dx * push; pa.y -= (dy / 2) * push;
+        pb.x += dx * push; pb.y += (dy / 2) * push;
+        moved = true;
+      }
+      if (!moved) break;
+    }
+    const near = (box) => unique.some((id) => {
+      const at = positions.get(id);
+      return at.x + 6 * u > box.x0 && at.x - 6 * u < box.x1 && at.y + 6 * u > box.y0 && at.y - 6 * u < box.y1;
+    });
     for (const [name, reach] of [['Core', 0.15], ['Inner Rim', 0.35], ['Mid Rim', 0.58], ['Outer Rim', 0.78], ['Wild Space', 0.95]]) {
       element('ellipse', { class: 'r3-chart__ring', cx: 0, cy: 0, rx: reach * 92, ry: reach * 46, 'stroke-width': (0.8 * u).toFixed(3), 'stroke-dasharray': `${(2 * u).toFixed(2)} ${(4 * u).toFixed(2)}` }, svg);
-      const tag = element('text', { class: 'r3-chart__region', x: 0, y: (reach * 46 + 3.4 * u).toFixed(2), 'font-size': (8 * u).toFixed(2), 'text-anchor': 'middle' }, svg);
+      // A ring's name sits on its bottom edge, or on its top where a stop is in the way.
+      const half = name.length * 3.2 * u;
+      let y = reach * 46 + 3.4 * u;
+      if (near({ x0: -half, x1: half, y0: y - 7 * u, y1: y + 1 * u })) y = -reach * 46 + 3.4 * u;
+      const tag = element('text', { class: 'r3-chart__region', x: 0, y: y.toFixed(2), 'font-size': (8 * u).toFixed(2), 'text-anchor': 'middle' }, svg);
       tag.textContent = name;
+      taken.push({ x0: -half, x1: half, y0: y - 7 * u, y1: y + 1 * u });
     }
 
-    const positions = new Map(unique.map((id) => [id, place(chart.nodes[id])]));
     if (stops.length > 1) {
       const points = chart.path.map((id) => positions.get(id)).filter(Boolean).map((p) => `${p.x.toFixed(2)},${p.y.toFixed(2)}`);
       // The course: a soft wide trail under a crisp dashed line that runs toward the present.
@@ -274,13 +314,19 @@ export function createNav({ stage, survey, jumpTo, live = () => ({}), reduceMoti
     }
     const last = chart.path[chart.path.length - 1];
     const here = current && !current.unlisted ? current.label.toLowerCase() : null;
-    // Stops nearer the bottom are drawn last, so their labels sit over the ones behind.
+    // Stops nearer the bottom are drawn last, so their labels sit over the ones behind. Every dot,
+    // and the current stop's ring, is room no label may take.
     const order = [...unique].sort((a, b) => positions.get(a).y - positions.get(b).y);
+    for (const id of unique) {
+      const at = positions.get(id);
+      const reach = (id === here ? 9 : 5) * u;
+      taken.push({ x0: at.x - reach, x1: at.x + reach, y0: at.y - reach, y1: at.y + reach });
+    }
     for (const id of order) {
       const node = chart.nodes[id];
       const at = positions.get(id);
       const isCurrent = id === here;
-      const left = at.x > 55;
+      const left = at.x > 40;
       const group = element('g', {
         class: `r3-chart__stop${isCurrent ? ' is-current' : ''}${id === last && !here ? ' is-last' : ''}`,
         'data-stop': id, 'data-current': isCurrent ? '1' : '0',
@@ -301,15 +347,47 @@ export function createNav({ stage, survey, jumpTo, live = () => ({}), reduceMoti
         const s = 3.6 * u;
         element('path', { class: 'r3-chart__dot', d: `M0 ${-s}L${s} 0L0 ${s}L${-s} 0Z` }, group);
       }
-      const dx = (left ? -8 : 8) * u;
-      const anchor = left ? 'end' : 'start';
-      const label = element('text', { class: 'r3-chart__label', x: dx.toFixed(2), y: (-1.5 * u).toFixed(2), 'font-size': (11 * u).toFixed(2), 'text-anchor': anchor }, group);
+      // The label block: name, region, and a line for the guide's count, about 9.2 and 6.4 pixels a
+      // character for the name and the rest.
+      // On a narrow stage the region line goes, but for the current stop: the rings already say it.
+      const subText = compact && !isCurrent ? '' : String(node.note || node.kind).split('·')[0].trim();
+      const width = Math.max(node.label.length * 9.2, subText.length * 6.4, 40) * u;
+      const height = (subText ? 30 : 21) * u;
+      const tries = [];
+      for (const side of left ? [-1, 1] : [1, -1]) for (const lift of [0, -1, 1, -2, 2, -3, 3, -4, 4]) tries.push({ side, lift });
+      // The first slot that is free, or failing that the one that overlaps least.
+      // A slot past the map's edge counts as overlap too, by the part outside.
+      const edgeX = Math.max(100, (box.width / scale) / 2 - 4 * u);
+      const outside = (b) => (Math.max(0, -54 - b.y0) + Math.max(0, b.y1 - 54)) * (b.x1 - b.x0) + (Math.max(0, -edgeX - b.x0) + Math.max(0, b.x1 - edgeX)) * (b.y1 - b.y0);
+      const area = (b) => outside(b) + taken.reduce((sum, other) => sum + Math.max(0, Math.min(b.x1, other.x1) - Math.max(b.x0, other.x0)) * Math.max(0, Math.min(b.y1, other.y1) - Math.max(b.y0, other.y0)), 0);
+      let chosen = null;
+      let least = Infinity;
+      for (const attempt of tries) {
+        const x0 = attempt.side > 0 ? at.x + 8 * u : at.x - 8 * u - width;
+        const y0 = at.y - 11 * u + attempt.lift * 13 * u;
+        const box = { x0, x1: x0 + width, y0, y1: y0 + height };
+        const cost = area(box);
+        if (cost < least) {
+          least = cost;
+          chosen = { ...attempt, box };
+          if (cost === 0) break;
+        }
+      }
+      taken.push(chosen.box);
+      const dx = (chosen.side > 0 ? 8 : -8) * u;
+      const dy = chosen.lift * 13 * u;
+      const anchor = chosen.side > 0 ? 'start' : 'end';
+      if (chosen.lift) element('line', { class: 'r3-chart__leader', x1: 0, y1: 0, x2: (dx * 0.8).toFixed(2), y2: (dy - 4 * u).toFixed(2), 'stroke-width': (0.8 * u).toFixed(3) }, group);
+      const label = element('text', { class: 'r3-chart__label', x: dx.toFixed(2), y: (dy - 1.5 * u).toFixed(2), 'font-size': (11 * u).toFixed(2), 'text-anchor': anchor }, group);
       label.textContent = node.label;
-      const sub = element('text', { class: 'r3-chart__sub', x: dx.toFixed(2), y: (9.5 * u).toFixed(2), 'font-size': (8.5 * u).toFixed(2), 'text-anchor': anchor }, group);
-      sub.textContent = String(node.note || node.kind).split('·')[0].trim();
+      if (subText) {
+        const sub = element('text', { class: 'r3-chart__sub', x: dx.toFixed(2), y: (dy + 9.5 * u).toFixed(2), 'font-size': (8.5 * u).toFixed(2), 'text-anchor': anchor }, group);
+        sub.textContent = subText;
+      }
+      const guideY = dy + (subText ? 19.5 : 9.5) * u;
       guideFor(node.label).then((found) => {
         if (!found || !open || !group.isConnected) return;
-        const guide = element('text', { class: 'r3-chart__guide', x: dx.toFixed(2), y: (19.5 * u).toFixed(2), 'font-size': (8.5 * u).toFixed(2), 'text-anchor': anchor }, group);
+        const guide = element('text', { class: 'r3-chart__guide', x: dx.toFixed(2), y: guideY.toFixed(2), 'font-size': (8.5 * u).toFixed(2), 'text-anchor': anchor }, group);
         guide.textContent = `Guide ▸ ${found.count}`;
       }).catch(() => {});
     }
