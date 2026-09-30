@@ -691,10 +691,12 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
   // Capital ships: one of each hull the sides fly, built once, each with its shield.
   const capitals = [];
   for (const side of sides) {
-    for (const [kind, label] of side.capitals) {
-      let ship = capitals.find((entry) => entry.side === side && entry.kind === kind);
+    for (const [kind, label, shape] of side.capitals) {
+      // [r3:lore] One model per hull and shape: a Venator and an Acclamator are both wedges.
+      const variant = shape ? JSON.stringify(shape) : '';
+      let ship = capitals.find((entry) => entry.side === side && entry.kind === kind && entry.variant === variant);
       if (!ship) {
-        const design = buildCapital(kind, random);
+        const design = buildCapital(kind, random, shape);
         const material = shipMaterial(side, { textured: true, panels: 30, haze: 0.1 });
         const mesh = new THREE.Mesh(design.geometry, material);
         mesh.frustumCulled = false;
@@ -706,7 +708,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
         group.add(shield.mesh);
         group.visible = false;
         own(group);
-        ship = { side, kind, design, material, group, lights, shield, labels: [] };
+        ship = { side, kind, variant, design, material, group, lights, shield, labels: [] };
         capitals.push(ship);
       }
       ship.labels.push(label);

@@ -79,13 +79,17 @@ const v3 = (points) => points.map((point) => new THREE.Vector3(...point));
 // The wedge: a dagger with walls along its edges, a dorsal wedge on the spine, a stepped
 // superstructure up to a masted bridge tower, turbolaser batteries down both edges and greebles
 // over the deck. Star destroyers of every era are this, in different liveries.
-function wedge(random) {
+// [r3:lore] `half` is half the beam for a length of one: an Imperial-class is 1,600 by 985 m
+// (0.31), a Venator 1,137-1,155 by 548 m (0.24), a Resurgent 2,916 by 1,484 m (0.25). `towers` is
+// 2 for the Venator's twin command towers.
+function wedge(random, { half: W = 0.38, towers = 1 } = {}) {
+  const k = W / 0.38;
   const nose = [0, 0.006, 0.5];
   const keel = [0, -0.006, 0.5];
-  const leftTop = [-0.38, 0.014, -0.5];
-  const leftBottom = [-0.38, -0.014, -0.5];
-  const rightTop = [0.38, 0.014, -0.5];
-  const rightBottom = [0.38, -0.014, -0.5];
+  const leftTop = [-W, 0.014, -0.5];
+  const leftBottom = [-W, -0.014, -0.5];
+  const rightTop = [W, 0.014, -0.5];
+  const rightBottom = [W, -0.014, -0.5];
   const ridge = [0, 0.075, -0.5];
   const belly = [0, -0.05, -0.5];
   const stern = [0, 0.004, -0.5];
@@ -99,23 +103,28 @@ function wedge(random) {
   ], new THREE.Vector3(0, 0, -0.17)), kind: 0 }];
   // The dorsal wedge, painted in liveries that stripe it (a Venator's red).
   parts.push({ geometry: hull([
-    [[0, 0.03, 0.2], [-0.14, 0.05, -0.5], [0, 0.1, -0.5]], [[0, 0.03, 0.2], [0, 0.1, -0.5], [0.14, 0.05, -0.5]],
-    [[0, 0.03, 0.2], [0, 0.02, -0.5], [-0.14, 0.05, -0.5]], [[0, 0.03, 0.2], [0.14, 0.05, -0.5], [0, 0.02, -0.5]],
-    [[-0.14, 0.05, -0.5], [0, 0.02, -0.5], [0, 0.1, -0.5]], [[0, 0.1, -0.5], [0, 0.02, -0.5], [0.14, 0.05, -0.5]],
+    [[0, 0.03, 0.2], [-0.14 * k, 0.05, -0.5], [0, 0.1, -0.5]], [[0, 0.03, 0.2], [0, 0.1, -0.5], [0.14 * k, 0.05, -0.5]],
+    [[0, 0.03, 0.2], [0, 0.02, -0.5], [-0.14 * k, 0.05, -0.5]], [[0, 0.03, 0.2], [0.14 * k, 0.05, -0.5], [0, 0.02, -0.5]],
+    [[-0.14 * k, 0.05, -0.5], [0, 0.02, -0.5], [0, 0.1, -0.5]], [[0, 0.1, -0.5], [0, 0.02, -0.5], [0.14 * k, 0.05, -0.5]],
   ], new THREE.Vector3(0, 0.05, -0.27)), kind: 6 });
   const box = (w, h, d, x, y, z, kind) => parts.push({ geometry: new THREE.BoxGeometry(w, h, d), matrix: at(x, y, z), kind });
-  box(0.3, 0.05, 0.3, 0, 0.09, -0.36, 3);
-  box(0.22, 0.045, 0.22, 0, 0.13, -0.4, 3);
-  box(0.15, 0.04, 0.15, 0, 0.165, -0.43, 3);
-  box(0.36, 0.02, 0.06, 0, 0.1, -0.24, 1);
-  box(0.045, 0.07, 0.05, 0, 0.215, -0.44, 1);
-  box(0.21, 0.028, 0.055, 0, 0.26, -0.44, 3);
-  box(0.004, 0.05, 0.004, 0.03, 0.3, -0.45, 1);
-  box(0.003, 0.035, 0.003, -0.025, 0.29, -0.45, 1);
-  for (const x of [-0.07, 0.07]) parts.push({ geometry: new THREE.SphereGeometry(0.02, 12, 10), matrix: at(x, 0.285, -0.44), kind: 1 });
+  box(0.3 * k, 0.05, 0.3, 0, 0.09, -0.36, 3);
+  box(0.22 * k, 0.045, 0.22, 0, 0.13, -0.4, 3);
+  box(0.15 * k, 0.04, 0.15, 0, 0.165, -0.43, 3);
+  box(0.36 * k, 0.02, 0.06, 0, 0.1, -0.24, 1);
+  // The command tower, or two side by side.
+  const towerAt = towers === 2 ? [-0.052, 0.052] : [0];
+  const bar = towers === 2 ? 0.09 : 0.21;
+  for (const tx of towerAt) {
+    box(0.04, 0.07, 0.05, tx, 0.215, -0.44, 1);
+    box(bar, 0.028, 0.055, tx, 0.26, -0.44, 3);
+    for (const dx of towers === 2 ? [-0.03, 0.03] : [-0.07, 0.07]) parts.push({ geometry: new THREE.SphereGeometry(towers === 2 ? 0.014 : 0.02, 12, 10), matrix: at(tx + dx, 0.285, -0.44), kind: 1 });
+  }
+  box(0.004, 0.05, 0.004, towerAt[0] + 0.03, 0.3, -0.45, 1);
+  box(0.003, 0.035, 0.003, towerAt[towerAt.length - 1] - 0.025, 0.29, -0.45, 1);
   const deck = (x, z) => {
     const u = THREE.MathUtils.clamp(0.5 - z, 0, 1);
-    const half = Math.max(0.38 * u, 1e-3);
+    const half = Math.max(W * u, 1e-3);
     const crest = 0.006 + 0.069 * u;
     const edge = 0.006 + 0.008 * u;
     return crest + (edge - crest) * Math.min(1, Math.abs(x) / half);
@@ -123,7 +132,7 @@ function wedge(random) {
   for (let i = 0; i < 11; i++) {
     const z = 0.28 - i * 0.07;
     for (const s of [-1, 1]) {
-      const x = s * 0.38 * (0.5 - z) * 0.78;
+      const x = s * W * (0.5 - z) * 0.78;
       const y = deck(x, z);
       parts.push({ geometry: new THREE.CylinderGeometry(0.009, 0.011, 0.008, 10), matrix: at(x, y + 0.004, z), kind: 1 });
       box(0.004, 0.004, 0.022, x - 0.003, y + 0.009, z + 0.01, 1);
@@ -132,24 +141,24 @@ function wedge(random) {
   }
   for (let i = 0; i < 110; i++) {
     const z = 0.35 - Math.pow(random(), 0.7) * 0.8;
-    const x = (random() * 2 - 1) * 0.38 * (0.5 - z) * 0.85;
+    const x = (random() * 2 - 1) * W * (0.5 - z) * 0.85;
     const w = 0.006 + random() * 0.02;
     const h = 0.002 + random() * 0.008;
     box(w, h, 0.006 + random() * 0.03, x, deck(x, z) + h / 2, z, 1);
   }
-  for (const [x, y, r] of [[-0.12, 0.0, 0.045], [0, 0.025, 0.05], [0.12, 0.0, 0.045]]) {
+  for (const [x, y, r] of [[-0.12 * k, 0.0, 0.045], [0, 0.025, 0.05], [0.12 * k, 0.0, 0.045]]) {
     parts.push({ geometry: new THREE.CylinderGeometry(r, r * 1.15, 0.08, 24), matrix: at(x, y, -0.53).multiply(along), kind: 1 });
     parts.push({ geometry: new THREE.CylinderGeometry(r * 0.8, r * 0.8, 0.012, 24), matrix: at(x, y, -0.57).multiply(along), kind: 1 });
     parts.push({ geometry: new THREE.CircleGeometry(r * 0.78, 24), matrix: at(x, y, -0.5765).multiply(facingBack), kind: 2 });
   }
-  for (const x of [-0.21, 0.21]) {
+  for (const x of [-0.21 * k, 0.21 * k]) {
     parts.push({ geometry: new THREE.CylinderGeometry(0.016, 0.018, 0.05, 12), matrix: at(x, 0.0, -0.52).multiply(along), kind: 1 });
     parts.push({ geometry: new THREE.CircleGeometry(0.013, 12), matrix: at(x, 0.0, -0.5455).multiply(facingBack), kind: 2 });
   }
   return {
     geometry: merge(parts),
-    extremes: v3([[0, 0, 0.5], [-0.38, 0, -0.5], [0.38, 0, -0.5], [0, -0.05, -0.5], [0, 0.33, -0.45], [-0.11, 0.26, -0.44], [0.11, 0.26, -0.44], [-0.12, 0, -0.58], [0.12, 0, -0.58], [0, 0.07, -0.58]]),
-    lights: [[-0.375, 0.0, -0.49], [0.375, 0.0, -0.49], [0.03, 0.33, -0.45], [0, 0.012, 0.495]],
+    extremes: v3([[0, 0, 0.5], [-W, 0, -0.5], [W, 0, -0.5], [0, -0.05, -0.5], [0, 0.33, -0.45], [-0.11, 0.26, -0.44], [0.11, 0.26, -0.44], [-0.12 * k, 0, -0.58], [0.12 * k, 0, -0.58], [0, 0.07, -0.58]]),
+    lights: [[-W + 0.005, 0.0, -0.49], [W - 0.005, 0.0, -0.49], [towerAt[0] + 0.03, 0.33, -0.45], [0, 0.012, 0.495]],
   };
 }
 
@@ -161,9 +170,11 @@ function ringAndCore(random) {
   const ring = new THREE.TorusGeometry(0.4, 0.1, 14, 72, Math.PI * 2 - gap);
   // The torus lies in xy from +x round to its gap; stood in xz and turned, its gap faces the bow.
   parts.push({ geometry: ring, matrix: new THREE.Matrix4().makeRotationY(-Math.PI / 2 - gap / 2).multiply(new THREE.Matrix4().makeRotationX(Math.PI / 2)).multiply(scaled(1, 1, 0.38)), kind: 3 });
-  parts.push({ geometry: new THREE.SphereGeometry(0.17, 32, 20), matrix: at(0, 0, 0.05), kind: 0 });
-  parts.push({ geometry: new THREE.SphereGeometry(0.05, 16, 10), matrix: at(0, 0.17, 0.02), kind: 1 });
-  parts.push({ geometry: new THREE.CylinderGeometry(0.025, 0.04, 0.08, 12), matrix: at(0, 0.13, 0.03), kind: 1 });
+  // [r3:lore] The core and its tower stand 0.31 of the length tall, as the canon 3,356.9 by
+  // 1,028.77 m does; the core was a sphere of 0.34 before, and the whole 0.39 tall.
+  parts.push({ geometry: new THREE.SphereGeometry(0.133, 32, 20), matrix: at(0, 0, 0.05), kind: 0 });
+  parts.push({ geometry: new THREE.SphereGeometry(0.04, 16, 10), matrix: at(0, 0.165, 0.02), kind: 1 });
+  parts.push({ geometry: new THREE.CylinderGeometry(0.022, 0.034, 0.06, 12), matrix: at(0, 0.135, 0.03), kind: 1 });
   parts.push({ geometry: new THREE.BoxGeometry(0.34, 0.07, 0.1), matrix: at(0, 0, -0.44), kind: 1 });
   for (let i = 0; i < 6; i++) {
     const x = -0.14 + i * 0.056;
@@ -183,8 +194,8 @@ function ringAndCore(random) {
   }
   return {
     geometry: merge(parts),
-    extremes: v3([[-0.5, 0, 0], [0.5, 0, 0], [0, 0, -0.5], [0.2, 0, 0.46], [-0.2, 0, 0.46], [0, 0.22, 0.02], [0, -0.04, 0]]),
-    lights: [[0.18, 0.02, 0.45], [-0.18, 0.02, 0.45], [0, 0.22, 0.02]],
+    extremes: v3([[-0.5, 0, 0], [0.5, 0, 0], [0, 0, -0.5], [0.2, 0, 0.46], [-0.2, 0, 0.46], [0, 0.205, 0.02], [0, -0.133, 0.05]]),
+    lights: [[0.18, 0.02, 0.45], [-0.18, 0.02, 0.45], [0, 0.205, 0.02]],
   };
 }
 
@@ -243,8 +254,9 @@ function hammerhead(random) {
 
 const CAPITALS = { wedge, ringAndCore, organicCruiser, hammerhead };
 
-export function buildCapital(kind, random) {
-  return CAPITALS[kind](random);
+// [r3:lore] options: a side's proportions for this hull (FACTIONS[side].shapes[kind]).
+export function buildCapital(kind, random, options = undefined) {
+  return CAPITALS[kind](random, options);
 }
 
 // Fighters -------------------------------------------------------------------------------------------
@@ -339,23 +351,28 @@ export function buildFighter(kind) {
 
 // Factions and scenarios ------------------------------------------------------------------------
 
+// [r3:lore] Checked ship by ship in content/docs/hero-shipyard.md: canon where canon speaks, Legends
+// for the Old Republic that Starwind is set in. A capital is [hull, class and length, shape]; the
+// shape is the hull's proportions for that class (see wedge), and ships of one side with the same
+// hull and shape share one model.
+const IMPERIAL = { half: 0.31 };
 export const FACTIONS = {
   empire: { name: 'Imperial Navy', hull: '#7a7f87', paint: '#6a6f76', engine: '#9fd8ff', laser: '#56ff6a', fighters: ['tie'],
-    capitals: [['wedge', 'Imperial-class · 1,600 m'], ['wedge', 'Victory-class · 900 m'], ['wedge', 'Tector-class · 1,600 m'], ['wedge', 'Interdictor · 1,129 m']] },
+    capitals: [['wedge', 'Imperial-class · 1,600 m', IMPERIAL], ['wedge', 'Victory-class · 900 m', IMPERIAL], ['wedge', 'Tector-class · 1,600 m', IMPERIAL], ['wedge', 'Interdictor-class · 1,600 m', IMPERIAL]] },
   rebels: { name: 'Rebel Alliance', hull: '#b8bcc2', paint: '#b8321f', engine: '#ff7a52', laser: '#ff4a3a', fighters: ['xwing', 'awing'],
-    capitals: [['organicCruiser', 'MC80 Liberty · 1,200 m'], ['organicCruiser', 'MC80 Home One · 1,300 m'], ['hammerhead', 'Sphyrna-class · 315 m']] },
+    capitals: [['organicCruiser', 'MC80 Liberty · 1,200 m'], ['organicCruiser', 'MC80A Home One · 1,300 m'], ['hammerhead', 'Sphyrna-class · 117 m']] },
   republic: { name: 'Republic Navy', hull: '#cfccc4', paint: '#9a2a22', engine: '#8fd0ff', laser: '#5ab8ff', fighters: ['awing', 'xwing'],
-    capitals: [['wedge', 'Venator-class · 1,137 m'], ['wedge', 'Acclamator-class · 752 m']] },
+    capitals: [['wedge', 'Venator-class · 1,137 m', { half: 0.24, towers: 2 }], ['wedge', 'Acclamator I-class · 752 m', { half: 0.3 }]] },
   separatists: { name: 'Separatist Navy', hull: '#9a8a6a', paint: '#6e6a74', engine: '#7ab8ff', laser: '#ff5a3a', fighters: ['trifighter'],
-    capitals: [['ringAndCore', 'Lucrehulk-class · 3,170 m']] },
-  firstOrder: { name: 'First Order', hull: '#4c5058', paint: '#2e3136', engine: '#9fd8ff', laser: '#ff4a3a', fighters: ['tie'],
-    capitals: [['wedge', 'Resurgent-class · 2,916 m']] },
+    capitals: [['ringAndCore', 'Lucrehulk-class · 3,357 m']] },
+  firstOrder: { name: 'First Order', hull: '#4c5058', paint: '#2e3136', engine: '#9fd8ff', laser: '#56ff6a', fighters: ['tie'],
+    capitals: [['wedge', 'Resurgent-class · 2,916 m', { half: 0.255 }]] },
   resistance: { name: 'Resistance', hull: '#c4c0b8', paint: '#d4722a', engine: '#ff8a4a', laser: '#ff4a3a', fighters: ['xwing', 'awing'],
-    capitals: [['organicCruiser', 'MC85 Raddus · 3,438 m'], ['hammerhead', 'Hammerhead corvette · 315 m']] },
+    capitals: [['organicCruiser', 'MC85 Raddus · 3,438 m'], ['hammerhead', 'Sphyrna-class · 117 m']] },
   oldRepublic: { name: 'Old Republic', hull: '#c4bca8', paint: '#8a2a22', engine: '#9fd8ff', laser: '#ff6a3a', fighters: ['awing'],
-    capitals: [['hammerhead', 'Hammerhead-class · 314 m'], ['hammerhead', 'Endar Spire · Hammerhead-class']] },
+    capitals: [['hammerhead', 'Hammerhead-class · 315 m'], ['hammerhead', 'Endar Spire · Hammerhead-class · 315 m']] },
   sith: { name: 'Sith Empire', hull: '#3e3a40', paint: '#8a1a1a', engine: '#ff6a4a', laser: '#ff3a3a', fighters: ['tie'],
-    capitals: [['wedge', 'Leviathan · Interdictor-class'], ['wedge', 'Interdictor-class · 600 m']] },
+    capitals: [['wedge', 'Leviathan · Interdictor-class · 600 m'], ['wedge', 'Interdictor-class · 600 m']] },
 };
 
 // An era's two sides.
