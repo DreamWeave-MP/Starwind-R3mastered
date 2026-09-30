@@ -78,7 +78,7 @@ const SHIELD_FRAGMENT = /* glsl */ `
   }
 `;
 
-export function createPilot({ hero, scene, camera, getFleet, jewelPx, starVelocity, reduceMotion, overText, overJewel, hyperCenter, jumping, onClick, requestFrame, accent }) {
+export function createPilot({ hero, stage = hero, scene, camera, getFleet, jewelPx, starVelocity, reduceMotion, overText, overJewel, hyperCenter, jumping, onClick, requestFrame, accent }) {
   const color = accent ? accent.clone() : new THREE.Color(0.5, 0.9, 1.0);
 
   // What the jewel does now: drifting (the hero's own bounce), held (steered), coasting after a
@@ -152,7 +152,7 @@ export function createPilot({ hero, scene, camera, getFleet, jewelPx, starVeloci
   // Presses: a press on the jewel is the pilot's. A click (no drag) still calls the fleet; a drag
   // steers. Everything else is left to the page and the rest of the hero.
   function heroPoint(event) {
-    const rect = hero.getBoundingClientRect();
+    const rect = stage.getBoundingClientRect(); // [r3:stage]
     return { x: event.clientX - rect.left, y: event.clientY - rect.top };
   }
   function press(event, point) {
@@ -199,12 +199,12 @@ export function createPilot({ hero, scene, camera, getFleet, jewelPx, starVeloci
   hero.addEventListener('touchstart', (event) => {
     if (reduceMotion || event.touches.length !== 1) return;
     const touch = event.touches[0];
-    const rect = hero.getBoundingClientRect();
+    const rect = stage.getBoundingClientRect(); // [r3:stage]
     if (overJewel({ x: touch.clientX - rect.left, y: touch.clientY - rect.top })) event.preventDefault();
   }, { passive: false });
 
-  // Keeps a move of the jewel off the hero's text: a step that would bring its disc over a word or a
-  // button is dropped on that axis, so it slides along the text instead of crossing it.
+  // Keeps a move of the jewel on the stage: a step that would bring its disc off it is dropped on that
+  // axis, so it slides along the stage's edge. [r3:stage]
   function blocked(x, y) {
     const r = jewelPx.radius;
     return overText({ x, y }) || overText({ x: x + r, y }) || overText({ x: x - r, y }) || overText({ x, y: y + r }) || overText({ x, y: y - r });

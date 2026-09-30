@@ -9,7 +9,7 @@
 // on the capital ships tinted by their livery, the sun from behind the planet, the planet's glow
 // from below, a backlit rim, lit ports and burning engines. Going to or coming from hyperspace, a
 // ship is stretched along its heading into a streak and washed white, and a flash marks the moment.
-// They fly only in the part of the hero the text leaves free, and under prefers-reduced-motion a
+// They fly anywhere on the hero's stage, and under prefers-reduced-motion a
 // capital ship holds still in the middle of its crossing and the fighters stay away.
 
 import * as THREE from './vendor/three.module.min.js';
@@ -951,7 +951,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
   const visits = [makeVisit(0)];
   if (scenario.war) visits.push(makeVisit(1));
   let visitCount = 0;
-  const atWar = () => visits.length > 1 && !view.narrow;
+  const atWar = () => visits.length > 1; // [r3:stage] a phone's stage has room for a battle
 
   function planVisit(visit) {
     const { width, height, free, narrow } = view;
@@ -965,12 +965,11 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     const pool = named.length ? named : (asked.length && !war ? asked : capitals.filter((entry) => entry.side === side && !busy.includes(entry)));
     const ship = pool[Math.floor(random() * pool.length)];
     visit.ship = ship;
-    // As long as a third of the free sky, within reason; the hull's centre keeps half its length
-    // clear of the text and the hero's edges. On a phone the text fills the hero, so the ship keeps
-    // low and small, over the planet's limb beside the status strip. At war each is a little
-    // smaller, the one crossing high and far off, the other low and near.
-    const start = narrow ? width * 0.46 : Math.max(free + 30, width * 0.45);
-    const lengthPx = (narrow ? Math.min(width * 0.26, 100) : THREE.MathUtils.clamp((width - start) * 0.42, 180, 340)) * (war ? 0.72 : 1);
+    // As long as a third of the sky, within reason; the hull's centre keeps half its length clear
+    // of the stage's edges. A phone's stage is narrower, so its ships are smaller. At war each is a
+    // little smaller again, the one crossing high and far off, the other low and near.
+    const start = free + (narrow ? 16 : 30); // [r3:stage] the whole stage is sky
+    const lengthPx = (narrow ? THREE.MathUtils.clamp((width - start) * 0.36, 90, 150) : THREE.MathUtils.clamp((width - start) * 0.42, 180, 340)) * (war ? 0.72 : 1);
     const leftEdge = start + lengthPx * 0.55;
     const rightEdge = width - 24 - lengthPx * 0.7;
     const span = Math.max(rightEdge - leftEdge, 40);
@@ -978,10 +977,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     const x = direction < 0 ? leftEdge + span * (0.7 + 0.3 * random()) : leftEdge + span * (0.3 * random());
     let y;
     let depth;
-    if (narrow) {
-      y = height * (0.74 + 0.05 * random());
-      depth = -7 - random() * 4;
-    } else if (war) {
+    if (war) {
       y = height * (visit.slot === 0 ? 0.16 + 0.08 * random() : 0.4 + 0.08 * random());
       depth = visit.slot === 0 ? -11 - random() * 2 : -6 - random() * 2;
     } else {
@@ -1028,7 +1024,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
   }
   function planPass() {
     const { width, height, free, narrow } = view;
-    const left = narrow ? width * 0.5 : Math.max(free + 40, width * 0.48);
+    const left = free + (narrow ? 12 : 40); // [r3:stage] the whole stage is sky
     const right = width * 0.98;
     const mid = (left + right) / 2;
     const cruising = visits.filter((visit) => visit.state === 'cruising' && visit.ship && visit.systems.hangar === 0); // [r3:gunnery] a hit hangar launches nothing
