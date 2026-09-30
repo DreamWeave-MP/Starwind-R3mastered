@@ -9,10 +9,10 @@
 
 import * as THREE from './vendor/three.module.min.js';
 
-export const KINDS = { planet: 0, system: 1, binary: 2, star: 3, dwarf: 4, blackHole: 5, quasar: 6, shipyard: 7, deathStar: 8 };
+export const KINDS = { planet: 0, system: 1, binary: 2, star: 3, dwarf: 4, blackHole: 5, quasar: 6, shipyard: 7, deathStar: 8, heatDeath: 9 };
 
 // How often each backdrop comes up, out of the whole.
-const WEIGHTS = [['planet', 44], ['system', 9], ['binary', 8], ['star', 8], ['dwarf', 7], ['blackHole', 7], ['quasar', 5], ['shipyard', 10], ['deathStar', 2]];
+const WEIGHTS = [['planet', 44], ['system', 9], ['binary', 8], ['star', 8], ['dwarf', 7], ['blackHole', 7], ['quasar', 5], ['shipyard', 10], ['deathStar', 2], ['heatDeath', 2]];
 
 // Names for the survey readout, each backdrop drawing one.
 const NAMES = {
@@ -24,6 +24,7 @@ const NAMES = {
   quasar: [['Deep Core quasar', 'Deep Core · active nucleus'], ['Rishi Maze', 'Satellite galaxy · quasar']],
   shipyard: [['Kuat Drive Yards', 'Kuat · orbital drydocks'], ['Corellian Engineering', 'Corellia · orbital yards'], ['Fondor Shipyards', 'Colonies · orbital yards'], ['Mon Cala yards', 'Calamari · orbital yards']],
   deathStar: [['DS-1 Orbital Battle Station', 'Horuz system · Death Star'], ['Death Star II', 'Endor system · under construction']],
+  heatDeath: [['The last light', 'Heat death · 10^106 years · click to begin again'], ['Entropy', 'Heat death · no work remains · click to begin again']],
 };
 
 // Star colours by class, bright enough to bloom.
@@ -83,6 +84,8 @@ export function pickVista(random, { fresh = false, exclude = null } = {}) {
     vista.turn = (random() - 0.5) * 0.4;
   } else if (kind === 'deathStar') {
     vista.second = vista.name.includes('II');
+  } else if (kind === 'heatDeath') {
+    vista.bang = null;
   } else if (kind === 'shipyard') {
     vista.world = { 'Kuat Drive Yards': 'Kuat', 'Corellian Engineering': 'Corellia', 'Fondor Shipyards': 'Fondor', 'Mon Cala yards': 'Mon Cala' }[vista.name];
   }
@@ -136,6 +139,15 @@ export function placeVista(vista, { width, height, ratio, region, time, worlds }
     out.a = [x * ratio, up(y), schwarzschild * ratio, vista.seed];
     out.params = [vista.tilt, vista.roll, vista.spin, vista.hot];
     out.colourA = vista.kind === 'quasar' ? [1.2, 1.1, 1.3] : [1.4, 0.8, 0.45];
+    out.light = [x, y];
+  } else if (vista.kind === 'heatDeath') {
+    // How far the end has gone: most of the stars out in about a minute and a half, a few left.
+    const elapsed = vista.born === undefined ? 0 : time - vista.born;
+    const x = cx + spanX * 0.18;
+    const y = cy - spanY * 0.12;
+    out.a = [x * ratio, up(y), 5 * ratio, vista.seed];
+    out.params = [Math.min(0.975, 0.1 + elapsed / 90), 0, 0, 0];
+    if (vista.bang) out.b = [vista.bang.x * ratio, up(vista.bang.y), Math.max(1e-3, time - vista.bang.born), 0];
     out.light = [x, y];
   } else if (vista.kind === 'system') {
     const x = left + spanX * 0.42;
@@ -487,6 +499,36 @@ export const VISTA_GLSL = /* glsl */ `
         col = mix(col, lit, disc);
         col += uAccent * exp(-pow((r - 1.35) / 0.07, 2.0)) * 0.12;
       }
+    }
+    return col;
+  }
+
+  // The heat death: what is left after the stars (dimmed and put out in the star field itself) is a
+  // small black hole, glowing faintly as it evaporates, until it goes with a last flash. A click
+  // starts it all again: a point of light blowing out into a fireball, white-hot, cooling through
+  // yellow and orange to a mottled red as it fills the sky.
+  vec3 heatDeath(vec2 px, vec3 col) {
+    float progress = uVistaParams.x;
+    vec4 hole = uBodyA;
+    float r = length(px - hole.xy) / hole.z;
+    float gone = smoothstep(0.9, 0.905, progress);
+    float disc = 1.0 - smoothstep(1.0 - 1.5 / hole.z, 1.0, r);
+    col = mix(col, vec3(0.0), disc * (1.0 - gone));
+    col += vec3(0.7, 0.45, 1.0) * exp(-max(r - 1.0, 0.0) * 0.9) * (0.1 + 0.06 * sin(uTime * 2.3)) * (1.0 - gone);
+    col += vec3(1.3, 1.2, 1.4) * exp(-pow((progress - 0.9) * 90.0, 2.0)) * exp(-r * 0.25) * 3.0;
+    vec4 bang = uBodyB;
+    if (bang.z > 0.0) {
+      float age = bang.z;
+      vec2 d = (px - bang.xy) / uRatio;
+      float reach = 1600.0 * (1.0 - exp(-age * 1.2));
+      float rr = length(d) / max(reach, 1.0);
+      float inside = 1.0 - smoothstep(0.9, 1.0, rr);
+      float temperature = exp(-age * 0.8) * (1.25 - 0.45 * rr);
+      vec3 fire = mix(vec3(0.7, 0.12, 0.04), vec3(1.4, 1.1, 0.7), smoothstep(0.08, 0.5, temperature));
+      fire = mix(fire, vec3(1.5, 1.6, 2.0), smoothstep(0.55, 1.1, temperature));
+      float mottle = 0.7 + 0.6 * fbm2(d * 0.018 + vec2(age * 0.2, 3.0));
+      col = mix(col, fire * (0.8 + 2.4 * temperature) * mottle, inside);
+      col += vec3(1.5, 1.4, 1.3) * exp(-length(d) / (6.0 + age * 50.0)) * exp(-age * 0.9) * 5.0;
     }
     return col;
   }

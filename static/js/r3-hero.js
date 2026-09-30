@@ -148,6 +148,7 @@ const NEBULA_FRAGMENT = /* glsl */ `
   uniform vec3 uSpread;
   uniform vec3 uStrength;
   uniform vec4 uNoise;       // offset x, y, scale, warp
+  uniform float uFade;       // the clouds going dark, at the heat death
   ${NOISE}
   float cloudMask(vec2 p, vec2 at, float spread) {
     vec2 d = (p - vec2(at.x * uAspect, at.y)) / spread;
@@ -173,6 +174,7 @@ const NEBULA_FRAGMENT = /* glsl */ `
     col += uThird * thirdMask * (0.02 + 0.06 * smoothstep(0.5, 0.9, wisp)) * uStrength.z;
     // Dark lanes of dust across the brightest cloud.
     col *= 1.0 - 0.35 * smoothstep(0.55, 0.8, wisp) * cyanMask * uStrength.x;
+    col = mix(col, mix(uBottom, uTop, smoothstep(0.0, 1.0, vUv.y)) * (1.0 - 0.8 * uFade), uFade);
     gl_FragColor = vec4(col, 1.0);
   }
 `;
@@ -188,6 +190,7 @@ const SKY_FRAGMENT = /* glsl */ `
   uniform vec2 uScroll;      // the orbit's drift, css pixels, far layer
   uniform vec3 uHyper;       // hyperspace: the stars' stretch, how much of the planet shows, the tunnel
   uniform vec2 uHyperAt;     // the vanishing point, device pixels
+  uniform float uDying;      // at the heat death, how many of the stars have gone out, 0 to 1
   uniform vec3 uPlanet;      // centre x, y and radius, in device pixels
   uniform vec3 uSunDir;      // towards the sun, view space: x right, y up, z to the viewer
   uniform vec3 uSunColor;
@@ -328,9 +331,14 @@ const SKY_FRAGMENT = /* glsl */ `
     float twinkle = 0.6 + 0.4 * sin(uTime * (0.6 + 1.9 * h) + h * 60.0);
     float core = exp(-dot(d, d) / (size * size));
     vec3 tint = mix(vec3(0.75, 0.92, 1.0), vec3(1.0, 0.93, 0.82), hash21(id + 5.5));
+    // At the heat death each star goes out at its own moment, flaring as it goes, the last red.
+    float death = hash21(id + 23.7);
+    float alive = smoothstep(uDying - 0.004, uDying + 0.004, death);
+    float going = uDying > 0.0 ? exp(-pow((death - uDying) * 160.0, 2.0)) : 0.0;
+    tint = mix(tint, vec3(1.0, 0.42, 0.28), smoothstep(0.35, 0.9, uDying));
     float bright = step(0.3, h) * spikes;
     float spike = bright * (exp(-abs(d.y) * 1.6) * exp(-abs(d.x) * 0.16) + exp(-abs(d.x) * 1.6) * exp(-abs(d.y) * 0.16));
-    return tint * (core * (0.9 + 2.5 * bright) + spike * 0.55) * twinkle;
+    return tint * (core * (0.9 + 2.5 * bright) + spike * 0.55) * twinkle * alive + tint * core * going * 4.0;
   }
 
   // All three layers of stars, streaming past at their own speeds.
@@ -530,7 +538,9 @@ const SKY_FRAGMENT = /* glsl */ `
     }
 
     // The other backdrops.
-    if (uVista > 0.5 && uVista < 6.5) {
+    if (uVista > 8.5) {
+      col = heatDeath(px, col);
+    } else if (uVista > 0.5 && uVista < 6.5) {
       if (uVista < 1.5) {
         col = solarSystem(px, col);
       } else if (uVista < 2.5) {
@@ -975,6 +985,7 @@ function start(hero, art) {
     uSpread: { value: new THREE.Vector3(1, 1, 1) },
     uStrength: { value: new THREE.Vector3() },
     uNoise: { value: new THREE.Vector4(0, 0, 1, 1) },
+    uFade: { value: 0 },
   });
   const skyUniforms = {
     tNebula: { value: nebulaTarget.texture },
@@ -1004,6 +1015,7 @@ function start(hero, art) {
     uRingSeed: { value: 0 },
     uHyper: { value: new THREE.Vector3(0, 1, 0) },
     uVista: { value: 0 },
+    uDying: { value: 0 },
     uBodyA: { value: new THREE.Vector4() },
     uBodyB: { value: new THREE.Vector4() },
     uVistaParams: { value: new THREE.Vector4() },
@@ -1285,6 +1297,12 @@ function start(hero, art) {
       requestFrame();
       return;
     }
+    if (vista.kind === 'heatDeath' && !vista.bang && !jump.active) {
+      event.r3Taken = true;
+      vista.bang = { x: event.clientX - bounds.left, y: event.clientY - bounds.top, born: time.value };
+      requestFrame();
+      return;
+    }
     const body = systemWorldAt({ x: event.clientX - bounds.left, y: event.clientY - bounds.top });
     if (body) {
       event.r3Taken = true;
@@ -1543,6 +1561,10 @@ function start(hero, art) {
         sky.uWorldTintB.value[i].copy(tintOf(body.world.bands ? body.world.highland : body.world.lowland));
       });
       systemWorlds = placed.planets;
+      const dying = vista.kind === 'heatDeath' ? placed.params[0] : 0;
+      sky.uDying.value = dying;
+      nebulaMaterial.uniforms.uFade.value = dying;
+      if (vista.kind === 'heatDeath' && vista.bang && t - vista.bang.born > 3.2) beginJump();
       const [lightX, lightY] = placed.light;
       sunDir.value.set((lightX - width * 0.62) / height, -(lightY - height * 0.45) / height, -0.75).normalize();
       compositeUniforms.uSunPx.value.set(lightX * ratio, (height - lightY) * ratio);
@@ -1751,6 +1773,9 @@ function start(hero, art) {
       air.copy(accent).multiplyScalar(0.55).add(new THREE.Color(...colour).multiplyScalar(0.25));
     }
     systemWorlds = [];
+    sky.uDying.value = 0;
+    nebulaMaterial.uniforms.uFade.value = 0;
+    vista.born = time.value;
     worldAxis.set(world.tilt[0], world.tilt[1], 1).normalize();
     alignAxis.makeRotationFromQuaternion(new THREE.Quaternion().setFromUnitVectors(worldAxis, new THREE.Vector3(0, 1, 0)));
     spinAxisView.copy(worldAxis);
@@ -1791,6 +1816,7 @@ function start(hero, art) {
     if (vista.world) next = pickWorld({ fresh: true, name: vista.world });
     applyWorld(next);
     fleet = createFleet({ scene, camera, time, sunDir, sunColor, air, reduceMotion, overlay: art || hero, anisotropy: renderer.capabilities.getMaxAnisotropy(), random: world.random, scenario: pickScenario(world.random, { fresh: true }) });
+    if (vista.kind === 'heatDeath') fleet.leave();
     starPlaced = true;
     layout();
     renderer.compile(scene, camera);
@@ -1831,6 +1857,7 @@ function start(hero, art) {
     beginJump();
   });
   applyWorld(world);
+  if (vista.kind === 'heatDeath') fleet.leave();
 
   // Every shader is compiled before the first frame, in the background where the browser can
   // (KHR_parallel_shader_compile), so the page never stalls on the planet's large one. The still
