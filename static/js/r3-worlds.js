@@ -110,7 +110,7 @@ function pickFrame(roll) {
 }
 
 // A small seeded generator, so ?seed= repeats a variation exactly.
-function generator(seed) {
+export function generator(seed) { // [r3:chart] exported: r3-vistas.js seeds its own sequence
   let state = seed >>> 0;
   return () => {
     state = (state + 0x6d2b79f5) >>> 0;
@@ -143,21 +143,27 @@ function nudge(hex, random, amount) {
 
 // The world named in the address, or one at random, varied for this load. After a jump the address
 // no longer counts (fresh), and the world just left is not picked again (exclude).
-export function pickWorld({ fresh = false, exclude = null, name = null } = {}) {
+export function pickWorld({ fresh = false, exclude = null, name = null, seed: seedOption = null } = {}) {
   const query = new URLSearchParams(fresh ? '' : location.search);
   const asked = name || query.get('world');
   const seed = Number.parseInt(query.get('seed') || '', 10);
-  const random = generator(Number.isFinite(seed) ? seed : Math.floor(Math.random() * 2 ** 32));
+  // [r3:chart] The seed is kept on the world, so the chart and a permalink can replay the visit.
+  const seedValue = Number.isFinite(seedOption) ? seedOption >>> 0 : Number.isFinite(seed) ? seed >>> 0 : Math.floor(Math.random() * 2 ** 32);
+  const random = generator(seedValue);
   const named = asked ? WORLDS.find((world) => key(world.name) === key(asked)) : null;
   const choices = WORLDS.filter((world) => world.name !== exclude);
   // [r3:howard]
   const secret = (!fresh && query.get('it_just_works') === '1') || (!asked && rollUncharted(Math.random(), unchartedSeen()));
   if (secret) markUncharted();
-  const base = { ...DEFAULTS, ...(secret ? UNCHARTED : named || choices[Math.floor(random() * choices.length)]) };
+  // [r3:chart] The pick's roll is drawn whether or not the world is named, so a name and a seed replay
+  // a world that was first picked at random.
+  const pickRoll = random();
+  const base = { ...DEFAULTS, ...(secret ? UNCHARTED : named || choices[Math.floor(pickRoll * choices.length)]) };
   const spread = (value, amount, low = 0, high = 1) => Math.min(high, Math.max(low, value + (random() * 2 - 1) * amount));
   const within = ([low, high]) => low + (high - low) * random();
   const world = {
     ...base,
+    seedValue, // [r3:chart]
     scatter: within(base.scatter || [0.9, 1.1]),
     dust: within(base.dust || [0.9, 1.1]),
     thickness: within(base.thickness || [0.9, 1.1]),
