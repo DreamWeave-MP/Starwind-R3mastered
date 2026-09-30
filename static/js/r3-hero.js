@@ -206,6 +206,15 @@ const NEBULA_FRAGMENT = /* glsl */ `
     col += uThird * thirdMask * (0.02 + 0.06 * smoothstep(0.5, 0.9, wisp)) * uStrength.z;
     // Dark lanes of dust across the brightest cloud.
     col *= 1.0 - 0.35 * smoothstep(0.55, 0.8, wisp) * cyanMask * uStrength.x;
+    // Away from the view the page opens on, where this visit's clouds do not reach, the galaxy's
+    // band crosses the sky, mottled and dusty, so no side of it is bare. It fades out before it
+    // reaches the home view, which stays as it was composed.
+    float away = smoothstep(0.55, 0.0, -dir.z);
+    vec3 bandAxis = normalize(vec3(0.35 + 0.2 * sin(uNoise.x), 1.0, 0.25 + 0.2 * cos(uNoise.y)));
+    float across = dot(dir, bandAxis);
+    float band = exp(-across * across / 0.045) * (0.35 + 0.65 * smoothstep(0.35, 0.8, cloud)) * (1.0 - 0.5 * smoothstep(0.5, 0.8, wisp));
+    col += mix(uViolet, uCyan, 0.35 + 0.3 * ridge) * band * away * 0.09;
+    col += uViolet * smoothstep(0.5, 0.9, cloud) * away * 0.025;
     col = mix(col, base * (1.0 - 0.8 * uFade), uFade);
     gl_FragColor = vec4(col, 1.0);
   }
