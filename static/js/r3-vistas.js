@@ -9,6 +9,7 @@
 // what colour, and for a solar system where each world sits on its orbit.
 
 import * as THREE from './vendor/three.module.min.js';
+import { generator } from './r3-worlds.js'; // [r3:chart]
 
 export const KINDS = { planet: 0, system: 1, binary: 2, star: 3, dwarf: 4, blackHole: 5, quasar: 6, shipyard: 7, deathStar: 8, heatDeath: 9 };
 
@@ -34,13 +35,20 @@ const STAR_CLASSES = [
   ['K', [1.25, 0.78, 0.45]], ['M', [1.2, 0.5, 0.28]],
 ];
 
-export function pickVista(random, { fresh = false, exclude = null } = {}) {
+export function pickVista(random, { fresh = false, exclude = null, kind: forcedKind = null, vseed = null } = {}) {
   const query = new URLSearchParams(fresh ? '' : location.search);
-  let kind = query.get('vista');
+  // [r3:chart] The backdrop draws from its own sequence, seeded from the world's, and its roll is
+  // drawn whether or not the kind is forced: a kind and a seed replay it.
+  const drawn = Math.floor(random() * 2 ** 32);
+  const asked = Number.parseInt(query.get('vseed') || '', 10);
+  const vistaSeed = Number.isFinite(vseed) ? vseed >>> 0 : Number.isFinite(asked) ? asked >>> 0 : drawn;
+  random = generator(vistaSeed);
+  const kindRoll = random();
+  let kind = forcedKind || query.get('vista');
   if (!kind || !(kind in KINDS)) {
     const choices = WEIGHTS.filter(([name]) => name !== exclude || name === 'planet');
     const total = choices.reduce((sum, [, weight]) => sum + weight, 0);
-    let roll = random() * total;
+    let roll = kindRoll * total;
     kind = choices[0][0];
     for (const [name, weight] of choices) {
       roll -= weight;
@@ -50,7 +58,7 @@ export function pickVista(random, { fresh = false, exclude = null } = {}) {
       }
     }
   }
-  const vista = { kind, index: KINDS[kind], seed: random() * 100 };
+  const vista = { kind, index: KINDS[kind], seed: random() * 100, vseed: vistaSeed }; // [r3:chart] vseed
   if (kind === 'planet') return vista;
   const pick = (list) => list[Math.floor(random() * list.length)];
   const starColour = (classes) => {
