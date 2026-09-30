@@ -752,6 +752,8 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
 
   // Laser bolts: fighters' in a dogfight, turbolasers between capital ships at war. A bolt with a
   // target resolves on arrival, on the target's shield while it holds and on its hull after.
+  // [r3:environment] The backdrop's pull on bolts and fighters, set by r3-environment.js.
+  const env = { deflect: null, bend: null };
   const BOLTS = 96;
   const boltGeometry = new THREE.BufferGeometry();
   boltGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(BOLTS * 6), 3));
@@ -1452,6 +1454,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
       shot.age += dt;
       const alive = shot.age >= 0 && shot.age < shot.life;
       if (alive) shot.position.addScaledVector(shot.direction, shot.speed * Math.min(dt, shot.age));
+      if (alive && env.deflect) env.deflect(shot, dt); // [r3:environment]
       if (shot.target && before < shot.life && shot.age >= shot.life) {
         resolveHit(shot.target, shot.aimed);
         shot.target = null;
@@ -1520,6 +1523,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
         else if (index === 3) tmp.addScaledVector(heading, -1.1).addScaledVector(up, -0.6);
         if (flight.chasing) tmp.addScaledVector(right, 0.35 * Math.sin(clock * 2.2 + index * 2)).addScaledVector(up, 0.25 * Math.cos(clock * 1.7 + index));
         fighter.group.position.copy(tmp);
+        if (env.bend) env.bend(fighter.group.position); // [r3:environment]
         fighter.group.scale.setScalar(0.55);
         orient(fighter.group, heading, up);
         fighter.group.visible = s > 0 && s < 1;
@@ -1577,6 +1581,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     now: () => clock,
     onDestroyed: (listener) => listeners.destroyed.push(listener),
     scenario, sides, visits,
+    capitals, fighters: allFighters, env, // [r3:environment]
   };
 
   return {

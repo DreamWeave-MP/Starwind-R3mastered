@@ -218,6 +218,26 @@
   white-space: nowrap
   text-shadow: 0 0 6px rgb(0 0 0 / 90%)
 
+// [r3:environment] What the weather is doing to a contact: shields down in a flare, jumping clear
+// of a quasar's jet. It sits under the label, in warning amber, and fades in and out.
+.r3-contact__status
+  position: absolute
+  top: 100%
+  left: 0
+  margin-top: 1.15rem
+  color: var(--dw-warn)
+  font-family: var(--dw-font-mono)
+  font-size: .56rem
+  letter-spacing: .14em
+  text-transform: uppercase
+  white-space: nowrap
+  text-shadow: 0 0 6px rgb(0 0 0 / 90%)
+  opacity: 0
+  transition: opacity .3s ease
+
+  &.is-shown
+    opacity: 1
+
 // A solar system's world under the pointer, named for the jump a click will make.
 .r3-waypoint
   position: absolute

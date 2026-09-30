@@ -32,6 +32,7 @@ import { pickVista, placeVista, VISTA_GLSL } from './r3-vistas.js';
 import { createFleet } from './r3-ships.js';
 import { createMemory } from './r3-memory.js'; // [r3:memory]
 import { createDirector } from './r3-events.js'; // [r3:director]
+import { createEnvironment } from './r3-environment.js'; // [r3:environment]
 import { pickScenario } from './r3-shipyard.js';
 
 const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -1109,6 +1110,9 @@ function start(hero, art) {
     uWhite: { value: 0 },
   };
   const compositeMaterial = fullscreenMaterial(COMPOSITE_FRAGMENT, compositeUniforms);
+  // [r3:environment] The backdrop as weather on the ships: flares, a black hole's pull, a binary's light.
+  const environment = createEnvironment({ sky: skyUniforms, composite: compositeUniforms, sunDir, sunColor, reduceMotion });
+  environment.onArrive({ kit: fleet.kit, vista });
   function blur(source, via, target, radius) {
     blurMaterial.uniforms.tInput.value = source.texture;
     blurMaterial.uniforms.uDirection.value.set(radius / source.width, 0);
@@ -1562,9 +1566,11 @@ function start(hero, art) {
     } else {
       compositeUniforms.uSun2Show.value = 0;
     }
+    if (planetLike()) environment.place(null); // [r3:environment]
     if (!planetLike()) {
       // Another backdrop: its bodies placed for this moment, and its light lighting the scene.
       const placed = placeVista(vista, { width, height, ratio, region: freeRegion, time: t, worlds: WORLDS });
+      environment.place(placed); // [r3:environment]
       const sky = skyUniforms;
       sky.uBodyA.value.set(...placed.a);
       sky.uBodyB.value.set(...placed.b);
@@ -1681,6 +1687,7 @@ function start(hero, art) {
     fleet.planet((planet.x - drift.value.x * 26) * ratio, (planet.y - drift.value.y * 26) * ratio, planet.radius * ratio);
     fleet.player(jewelPx.x, jewelPx.y); // [r3:memory]
     director.update(reduceMotion ? 0 : dt); // [r3:director]
+    environment.update(reduceMotion ? 0 : dt, jump.active); // [r3:environment]
     const shipFlash = fleet.update(reduceMotion ? 0 : dt);
     // An explosion shakes the camera for a moment.
     if (shipFlash.shake > 0) {
@@ -1875,6 +1882,7 @@ function start(hero, art) {
     director.dispose(); // [r3:director] the old one's ships went with the old fleet
     director = createDirector({ kit: fleet.kit, fleet, memory, random: world.random });
     director.onArrive({ world: world.name, vista: vista.kind });
+    environment.onArrive({ kit: fleet.kit, vista }); // [r3:environment]
     if (vista.kind === 'heatDeath') fleet.leave();
     starPlaced = true;
     layout();
