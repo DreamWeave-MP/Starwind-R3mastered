@@ -1490,7 +1490,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
       if (l >= 1) {
         visit.state = 'waiting';
         // [r3:memory] A furious navy comes straight back.
-        visit.until = clock + (ship.side.stance === 'furious' ? 3 + random() * 2 : 7 + random() * 9);
+        visit.until = clock + (fleetNow ? 0.5 : ship.side.stance === 'furious' ? 3 + random() * 2 : 7 + random() * 9);
         ship.group.visible = false;
       }
     }
