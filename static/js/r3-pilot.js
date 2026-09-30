@@ -132,7 +132,7 @@ export function createPilot({ hero, scene, camera, getFleet, jewelPx, starVeloci
 
   // What the fighters are up to with the jewel: one buzzing it, a pair formed up on it, or a hostile
   // lining up a shot. Only one at a time, and not often.
-  const escort = { kind: null, flight: null, fighter: null, start: 0, until: 0, next: 12, shots: 0, shotAt: 0 };
+  const escort = { kind: null, flight: null, fighter: null, start: 0, until: 0, next: 12, shots: 0, shotAt: 0, forced: null };
   const acknowledged = new Map();
   let nextHail = 6;
 
@@ -332,7 +332,8 @@ export function createPilot({ hero, scene, camera, getFleet, jewelPx, starVeloci
       if (scratch.x > 0 && scratch.x < bounds.width && scratch.y > 0 && scratch.y < bounds.height) {
         const hostile = HOSTILE.has(fighter.side.key || '');
         const roll = Math.random();
-        escort.kind = hostile ? (roll < 0.55 ? 'shot' : 'buzz') : (roll < 0.5 ? 'formation' : 'buzz');
+        escort.kind = escort.forced || (hostile ? (roll < 0.55 ? 'shot' : 'buzz') : (roll < 0.5 ? 'formation' : 'buzz'));
+        escort.forced = null;
         escort.flight = flight;
         escort.fighter = fighter;
         escort.start = now;
@@ -474,10 +475,17 @@ export function createPilot({ hero, scene, camera, getFleet, jewelPx, starVeloci
     setTimeout(() => contact.element.classList.remove('is-hailing'), 2600);
   }
 
-  return {
+  const api = {
     press,
     fly,
     update,
+    // For tests and screenshots: where the jewel is, and a way to have the fighters' next pass
+    // bring on a particular encounter at once.
+    jewel: () => ({ x: jewelPx.x, y: jewelPx.y, radius: jewelPx.radius }),
+    force(kind) {
+      escort.next = 0;
+      escort.forced = kind;
+    },
     // The jewel's roll into its turns, and its lean along its flight, added to the hero's own.
     get bank() { return bank; },
     get lean() { return lean; },
@@ -491,4 +499,6 @@ export function createPilot({ hero, scene, camera, getFleet, jewelPx, starVeloci
       shield.material.dispose();
     },
   };
+  hero.r3Pilot = api;
+  return api;
 }
