@@ -3,10 +3,12 @@
 // its companion, a lone star, a dwarf, a black hole bending the sky round itself, a quasar, a
 // shipyard, or, very rarely, the Death Star.
 //
-// VISTA_GLSL is spliced into the sky shader, which is compiled once per backdrop with VISTA
-// defined as its number, so only the backdrop showing is compiled. Each is drawn from uniforms that
-// placeVista() below works out from the hero's layout every frame: where its bodies are, how big,
-// what colour, and for a solar system where each world sits on its orbit.
+// placeVista() composes a backdrop on the stage, in pixels, as the hero first frames it; liftVista()
+// stands that composition up in three dimensions, in the backdrop's own frame (the sky's) about its
+// focus, the body the orbit camera turns round, so that seen from home it lands where placeVista()
+// put it. VISTA_GLSL is spliced into the sky shader, which traces each pixel's ray through those
+// bodies and is compiled once per backdrop with VISTA defined as its number, so only the backdrop
+// showing is compiled.
 
 import * as THREE from './vendor/three.module.min.js';
 import { generator } from './r3-worlds.js'; // [r3:chart]
@@ -141,6 +143,9 @@ export function placeVista(vista, { width, height, ratio, region, time, worlds }
     out.colourA = vista.colour;
     out.colourB = vista.companion;
     out.light = [(ax + bx) / 2, (ay + by) / 2];
+    out.centre = [cx, cy];
+    out.reach = reach;
+    out.angle = angle;
   } else if (vista.kind === 'blackHole' || vista.kind === 'quasar') {
     const schwarzschild = Math.min(spanX / 22, spanY / 12, 40);
     const x = cx + spanX * 0.05;
@@ -166,6 +171,7 @@ export function placeVista(vista, { width, height, ratio, region, time, worlds }
     out.colourA = vista.colour;
     out.params = [vista.incline, vista.turn, vista.belt, reach * ratio];
     out.light = [x, y];
+    out.centre = [x, y];
     const c = Math.cos(vista.turn);
     const s = Math.sin(vista.turn);
     vista.orbits.forEach((orbit, i) => {
@@ -179,25 +185,152 @@ export function placeVista(vista, { width, height, ratio, region, time, worlds }
       const py = y + ox * s + oy * c;
       const size = (5 + orbit.size * 10) * Math.min(1, spanY / 300);
       const world = worlds[Math.floor(orbit.world * worlds.length)];
-      out.planets.push({ x: px, y: py, radius: size, orbit: [a * ratio, b * ratio], world, behind: Math.sin(angle) < 0, index: i });
+      out.planets.push({ x: px, y: py, radius: size, orbit: [a * ratio, b * ratio], world, behind: Math.sin(angle) < 0, index: i, angle, reach: a });
     });
   }
   return out;
 }
 
+// How far off a backdrop other than a planet stands, in the ships' units: beyond every ship's path,
+// so a fleet always crosses in front of it, and far enough that perspective leaves the composition
+// as placeVista() drew it.
+const FAR = 120;
+
+// A body placeVista() drew as a disc, stood up as a sphere seen from home: its centre along the
+// ray through the disc's centre, at distance, its radius from the angle the disc subtends. A large
+// body is measured from its crown, the point of its limb highest on the stage, so the arc the page
+// shows lands where it was drawn.
+function sphereFrom(lens, x, y, radiusPx, distance, centre) {
+  const direction = lens.ray(x, y, scratchA);
+  const crown = lens.ray(x, y - radiusPx, scratchB);
+  const angle = Math.acos(THREE.MathUtils.clamp(direction.dot(crown), -1, 1));
+  centre.copy(lens.home).addScaledVector(direction, distance);
+  return distance * Math.sin(angle);
+}
+const scratchA = new THREE.Vector3();
+const scratchB = new THREE.Vector3();
+const scratchC = new THREE.Vector3();
+
+export function createLift() {
+  return {
+    focus: new THREE.Vector3(),
+    a: new THREE.Vector4(),
+    b: new THREE.Vector4(),
+    px: new THREE.Vector4(),
+    light: new THREE.Vector3(),
+    lightB: new THREE.Vector3(),
+    orbitU: new THREE.Vector3(1, 0, 0),
+    orbitV: new THREE.Vector3(0, 0, 1),
+    orbitN: new THREE.Vector3(0, 1, 0),
+    radii: new Float32Array(8),
+    worlds: Array.from({ length: 8 }, () => ({ centre: new THREE.Vector3(), radius: 0, world: null, index: 0 })),
+    count: 0,
+    bang: new THREE.Vector4(0, 0, 0, 0),
+    zoom: [0.5, 1.8],
+  };
+}
+
+// The backdrop placeVista() composed, in three dimensions: its focus in the camera's frame, and its
+// bodies about that focus in the sky's, which at home is the camera's frame moved to the focus.
+// lens: ray(x, y, out) the unit direction from the home camera through a css pixel (y down), home
+// the camera's place, pxTan the tangent a css pixel spans at the stage's centre, ratio and height.
+export function liftVista(vista, placed, lens, out, time) {
+  const css = (body) => [body[0] / lens.ratio, lens.height - body[1] / lens.ratio, body[2] / lens.ratio];
+  const pxWorld = FAR * lens.pxTan;
+  out.px.set(0, 0, pxWorld, 0);
+  out.count = 0;
+  out.bang.set(0, 0, 0, 0);
+  out.zoom = [0.45, 1.8];
+  const [ax, ay, ar] = css(placed.a);
+  if (vista.kind === 'star') {
+    // A star filling the foot of the stage: near enough to fill it, never near enough for a ship to
+    // pass behind its face.
+    const direction = lens.ray(ax, ay, scratchA);
+    const crown = lens.ray(ax, ay - ar, scratchB);
+    const angle = Math.acos(THREE.MathUtils.clamp(direction.dot(crown), -1, 1));
+    const distance = Math.max(60 / Math.max(1 - Math.sin(angle), 0.05), 140);
+    out.focus.copy(lens.home).addScaledVector(direction, distance);
+    out.a.set(0, 0, 0, distance * Math.sin(angle));
+    out.px.set(ar, 0, distance * lens.pxTan, placed.a[3]);
+    out.zoom = [0.8, 1.6];
+  } else if (vista.kind === 'binary') {
+    // The pair wheel about their barycentre on an orbit seen nearly edge on: the companion nearer
+    // the viewer while it swings down across the giant.
+    const [cx, cy] = placed.centre;
+    // One css pixel's width at the barycentre, which also stands the focus there.
+    const perPx = sphereFrom(lens, cx, cy, 1, FAR, out.focus);
+    const tilt = scratchC.set(0, -0.22, 0.975).normalize();
+    const c = Math.cos(placed.angle);
+    const s = Math.sin(placed.angle);
+    const rA = placed.reach * 0.45 * perPx;
+    const rB = placed.reach * 1.35 * perPx;
+    const giant = placed.reach * 0.55 * perPx;
+    out.a.set(-rA * c, -rA * s * tilt.y, -rA * s * tilt.z, giant);
+    out.b.set(rB * c, rB * s * tilt.y, rB * s * tilt.z, giant * vista.ratio);
+    out.orbitU.set(1, 0, 0);
+    out.orbitV.copy(tilt);
+    out.orbitN.crossVectors(out.orbitU, out.orbitV).normalize();
+    out.px.set(placed.reach * 0.55, placed.reach * 0.55 * vista.ratio, perPx, vista.seed);
+  } else if (vista.kind === 'system') {
+    // An orrery: the star, and each world on a circle in one plane, the plane tipped so its circles
+    // look like placeVista()'s ellipses; a world on the far side of its orbit passes behind the star.
+    const [incline, turn] = placed.params;
+    const radius = sphereFrom(lens, ax, ay, ar, FAR, out.focus);
+    out.a.set(0, 0, 0, radius);
+    out.px.set(ar, 0, pxWorld, placed.a[3]);
+    const c = Math.cos(turn);
+    const s = Math.sin(turn);
+    out.orbitU.set(c, -s, 0);
+    out.orbitV.set(-s * incline, -c * incline, Math.sqrt(Math.max(0, 1 - incline * incline)));
+    out.orbitN.crossVectors(out.orbitU, out.orbitV).normalize();
+    for (const planet of placed.planets) {
+      const slot = out.worlds[out.count];
+      const reach = planet.reach * lens.pxTan * FAR;
+      slot.centre.copy(out.orbitU).multiplyScalar(Math.cos(planet.angle) * reach).addScaledVector(out.orbitV, Math.sin(planet.angle) * reach);
+      slot.radius = planet.radius * pxWorld;
+      slot.world = planet.world;
+      slot.index = planet.index;
+      out.radii[out.count] = reach;
+      out.count += 1;
+      if (out.count >= 8) break;
+    }
+  } else {
+    // A dwarf, a black hole, a quasar, the end: one small body at the focus.
+    const radius = sphereFrom(lens, ax, ay, ar, FAR, out.focus);
+    out.a.set(0, 0, 0, radius);
+    out.px.set(ar, 0, pxWorld, placed.a[3]);
+    if (vista.kind === 'heatDeath' && vista.bang) {
+      // The new beginning, where it was clicked: its direction kept in the sky's frame, blown out
+      // until it fills everything.
+      const age = Math.max(1e-3, time - vista.bang.born);
+      const reach = 1600 * (1 - Math.exp(-age * 1.2)) * pxWorld;
+      out.bang.set(vista.bang.at.x, vista.bang.at.y, vista.bang.at.z, reach);
+      out.px.w = age;
+    }
+  }
+  // The light the backdrop throws: its main body, or for a binary both.
+  out.light.set(out.a.x, out.a.y, out.a.z);
+  out.lightB.set(out.b.x, out.b.y, out.b.z);
+  return out;
+}
+
 export const VISTA_GLSL = /* glsl */ `
   uniform float uVista;
-  uniform vec4 uBodyA;       // the main body: centre x, y and radius in device pixels, and a seed
-  uniform vec4 uBodyB;       // a companion, for a binary
+  uniform vec4 uBodyA;       // the main body, in the sky's frame: centre and radius (a hole's: its Schwarzschild radius)
+  uniform vec4 uBodyB;       // a binary's companion; the new beginning at the heat death (centre and reach)
+  uniform vec4 uBodyPx;      // the main body's radius and the companion's, in css pixels; a css pixel's width at the focus; a seed
   uniform vec4 uVistaParams;
   uniform vec3 uColourA;
   uniform vec3 uColourB;
-  uniform vec4 uWorlds[8];   // a solar system's worlds: centre x, y, radius, and 1 when on the far side
+  uniform vec4 uWorlds[8];   // a solar system's worlds: centre and radius
   uniform vec3 uWorldTint[8];
   uniform vec3 uWorldTintB[8];
-  uniform vec4 uOrbits[8];   // each world's orbit: semi-axes, device pixels, and whether the belt
+  uniform float uOrbitRadii[8];
+  uniform vec3 uOrbitU;      // the orbits' plane: two axes along it, and square to it
+  uniform vec3 uOrbitV;
+  uniform vec3 uOrbitN;
   uniform float uWorldCount;
-  uniform vec2 uSkySize;     // the canvas, device pixels
+  uniform float uBangAge;
 
   vec3 turnY(vec3 p, float a) {
     float c = cos(a);
@@ -205,152 +338,226 @@ export const VISTA_GLSL = /* glsl */ `
     return vec3(c * p.x + s * p.z, p.y, -s * p.x + c * p.z);
   }
 
+  // A sphere met along a ray from o in direction d (unit): x the distance to its near side, or -1
+  // if the ray misses it or it lies behind; y how near the ray passes its centre, in its radii.
+  vec2 sphereHit(vec3 o, vec3 d, vec4 s) {
+    vec3 p = o - s.xyz;
+    float b = dot(p, d);
+    float impact = sqrt(max(dot(p, p) - b * b, 0.0)) / s.w;
+    float h = b * b - dot(p, p) + s.w * s.w;
+    if (h < 0.0 || b > 0.0) return vec2(-1.0, impact);
+    return vec2(-b - sqrt(h), impact);
+  }
+  // The point of a sphere's surface a ray meets, or for a ray just past its limb the limb's nearest
+  // point, as a normal: so the pixels the edge antialiases over are shaded as the rim.
+  vec3 sphereNormal(vec3 o, vec3 d, vec4 s, float t) {
+    vec3 p = o - s.xyz;
+    vec3 q = t > 0.0 ? p + d * t : p - d * dot(p, d);
+    return q * inversesqrt(max(dot(q, q), 1e-12));
+  }
+
+  // Three octaves, for glows and gas, which need no finer detail.
+  float fbm3Lite(vec3 p) {
+    float v = 0.0;
+    float a = 0.5;
+    for (int i = 0; i < 3; i++) {
+      v += a * noise3(p);
+      p = p * 2.03 + vec3(1.7, 9.2, 3.1);
+      a *= 0.5;
+    }
+    return v + 0.125;
+  }
+
   #if VISTA >= 1 && VISTA <= 4
   // A star's face: darker toward the limb, boiling with granulation, spotted where it is active and
-  // brighter round the spots. Its detail fades where it would be finer than a pixel.
-  vec4 starFace(vec2 px, vec4 body, vec3 colour, float activity) {
-    vec2 q = (px - body.xy) / body.z;
-    float r = length(q);
-    if (r > 1.0) return vec4(0.0);
-    float mu = sqrt(max(0.0, 1.0 - r * r));
-    vec3 s = turnY(vec3(q, mu), uTime * 0.004 + body.w);
-    float footprint = 1.0 / body.z;
-    float granules = fbm3Filtered(s * 34.0 + vec3(0.0, uTime * 0.03, body.w), footprint * 34.0);
-    float magnetic = fbm3Filtered(s * 3.5 + body.w * 7.0, footprint * 3.5);
+  // brighter round the spots, the pattern its own as it turns. fw: how far its impact parameter
+  // moves across a pixel, which fades detail finer than one and softens the edge.
+  vec4 starFace(vec3 o, vec3 d, vec4 body, vec3 colour, float activity, float seed, float fw, out float t) {
+    vec2 hit = sphereHit(o, d, body);
+    t = hit.x;
+    float edge = (1.0 - smoothstep(1.0 - 1.5 * fw, 1.0 + 0.5 * fw, hit.y)) * step(0.0, -dot(o - body.xyz, d));
+    if (edge <= 0.0) return vec4(0.0);
+    vec3 n = sphereNormal(o, d, body, hit.x);
+    float mu = max(dot(n, -d), 0.0);
+    vec3 s = turnY(n, uTime * 0.004 + seed);
+    float granules = fbm3Filtered(s * 34.0 + vec3(0.0, uTime * 0.03, seed), fw * 34.0);
+    float magnetic = fbm3Filtered(s * 3.5 + seed * 7.0, fw * 3.5);
     float spots = smoothstep(0.66, 0.72, magnetic) * activity;
     float faculae = smoothstep(0.56, 0.64, magnetic) * (1.0 - spots) * activity;
     float limb = 0.3 + 0.7 * pow(mu, 0.6);
     vec3 face = colour * colour * limb * (0.7 + 0.6 * granules);
     face = mix(face, colour * vec3(0.35, 0.18, 0.1) * limb, spots * 0.85);
     face += colour * faculae * 0.35 * (1.0 - mu);
-    float edge = 1.0 - smoothstep(1.0 - 1.5 / body.z, 1.0, r);
     return vec4(face * 1.35, edge);
   }
 
   // A star's corona and prominences: streamers fading out from the limb, and bright loops of
-  // plasma standing just above it.
-  vec3 starHalo(vec2 px, vec4 body, vec3 colour, float activity) {
-    vec2 q = (px - body.xy) / body.z;
-    float r = length(q);
-    if (r < 1.0 - 1.5 / body.z) return vec3(0.0);
-    float around = atan(q.y, q.x);
-    // Heights in css pixels, so a star filling the hero has a corona no wider than a small one's.
-    float h = max(r - 1.0, 0.0) * body.z / uRatio;
-    float streamers = 0.55 + 0.45 * fbm2(vec2(around * 4.0 + body.w, h * 0.02 - uTime * 0.015));
+  // plasma standing just above it, fixed to the star as it turns. radiusPx: its radius in css
+  // pixels, so heights read in pixels whatever its size.
+  vec3 starHalo(vec3 o, vec3 d, vec4 body, vec3 colour, float activity, float seed, float radiusPx) {
+    vec3 p = o - body.xyz;
+    float along = -dot(p, d);
+    if (along <= 0.0) return vec3(0.0);
+    vec3 closest = p + d * along;
+    float r = length(closest) / body.w;
+    if (r < 0.995) return vec3(0.0);
+    vec3 c = closest / max(length(closest), 1e-6);
+    float h = (r - 1.0) * radiusPx;
+    float streamers = 0.55 + 0.45 * fbm3Lite(c * 3.0 + vec3(seed, h * 0.006 - uTime * 0.012, 0.0));
     float corona = exp(-h / 45.0) * streamers;
-    float loops = smoothstep(0.62, 0.82, fbm2(vec2(around * max(14.0, body.z / uRatio * 0.08) + body.w * 3.0, uTime * 0.04 + h * 0.08)));
+    float loops = smoothstep(0.62, 0.82, fbm3Lite(c * max(14.0, radiusPx * 0.08) + vec3(seed * 3.0, uTime * 0.04 + h * 0.03, 0.0)));
     float prominence = loops * exp(-h / 10.0) * activity;
     return colour * (corona * 0.55 + prominence * 1.6 + exp(-h / 220.0) * 0.06);
   }
-
   #endif
 
   #if VISTA == 4
   // A dwarf: a red one flaring, a white one tiny and fierce inside the shell of gas it threw off,
   // or a brown one, banded and dim.
-  vec3 dwarf(vec2 px, vec3 col) {
+  vec3 dwarf(vec3 o, vec3 d, vec3 col, float fw, inout float nearest) {
     vec4 body = uBodyA;
-    vec2 q = (px - body.xy) / body.z;
-    float r = length(q);
+    vec2 hit = sphereHit(o, d, body);
+    float r = hit.y;
+    bool front = dot(body.xyz - o, d) > 0.0;
     float type = uVistaParams.x;
-    if (type > 0.5 && type < 1.5) {
+    if (type > 0.5 && type < 1.5 && front) {
       // The planetary nebula: a shell seen through, brightest where the line of sight grazes it.
       float shell = uVistaParams.y * 7.0 + 5.0;
-      float d = r / shell;
-      float path = d < 1.0 ? sqrt(max(0.0, 1.0 - d * d)) - sqrt(max(0.0, 0.72 * 0.72 - d * d)) : 0.0;
-      float lumps = 0.6 + 0.8 * fbm2(q / shell * 5.0 + body.w);
-      vec3 gas = mix(vec3(0.2, 0.9, 0.85), vec3(1.0, 0.3, 0.35), smoothstep(0.75, 1.0, d));
+      float s = r / shell;
+      float path = s < 1.0 ? sqrt(max(0.0, 1.0 - s * s)) - sqrt(max(0.0, 0.72 * 0.72 - s * s)) : 0.0;
+      vec3 p = o - body.xyz;
+      vec3 closest = p - d * dot(p, d);
+      float lumps = 0.6 + 0.8 * fbm3Lite(closest / (shell * body.w) * 5.0 + uBodyPx.w);
+      vec3 gas = mix(vec3(0.2, 0.9, 0.85), vec3(1.0, 0.3, 0.35), smoothstep(0.75, 1.0, s));
       gas = mix(gas, vec3(0.5, 0.4, 1.0), uVistaParams.z * 0.5);
       col += gas * path * lumps * 0.55;
     }
-    vec3 face;
+    float disc = (1.0 - smoothstep(1.0 - 1.5 * fw, 1.0, r)) * (front ? 1.0 : 0.0);
+    float glowFrom = max(r - 1.0, 0.0);
     if (type < 0.5) {
-      vec4 surface = starFace(px, body, uColourA, 1.0);
+      float t;
+      vec4 surface = starFace(o, d, body, uColourA, 1.0, uBodyPx.w, fw, t);
       // Flares: now and then a patch of the surface flashes and throws off a loop.
-      float flare = pow(max(0.0, sin(uTime * 0.23 + body.w)), 30.0);
-      face = surface.rgb * (1.0 + flare * 1.5);
-      col = mix(col, face, surface.a);
-      col += starHalo(px, body, uColourA, 1.0 + flare * 2.0) * (1.0 + flare);
+      float flare = pow(max(0.0, sin(uTime * 0.23 + uBodyPx.w)), 30.0);
+      col = mix(col, surface.rgb * (1.0 + flare * 1.5), surface.a);
+      if (front) col += starHalo(o, d, body, uColourA, 1.0 + flare * 2.0, uBodyPx.w, uBodyPx.x) * (1.0 + flare);
     } else if (type < 1.5) {
-      float disc = 1.0 - smoothstep(1.0 - 1.5 / body.z, 1.0, r);
       col = mix(col, uColourA * 4.0, disc);
-      col += uColourA * (exp(-max(r - 1.0, 0.0) * 1.1) * 0.9 + exp(-max(r - 1.0, 0.0) * 0.15) * 0.12);
+      if (front) col += uColourA * (exp(-glowFrom * 1.1) * 0.9 + exp(-glowFrom * 0.15) * 0.12);
     } else {
-      float disc = 1.0 - smoothstep(1.0 - 1.5 / body.z, 1.0, r);
-      if (r < 1.0) {
-        float mu = sqrt(max(0.0, 1.0 - r * r));
-        vec3 s = turnY(vec3(q, mu), uTime * 0.02 + body.w);
-        float bands = 0.5 + 0.5 * sin(s.y * 14.0 + fbm3Filtered(s * vec3(2.0, 8.0, 2.0), 8.0 / body.z) * 4.0);
+      if (hit.x > 0.0 || disc > 0.0) {
+        vec3 n = sphereNormal(o, d, body, hit.x);
+        float mu = max(dot(n, -d), 0.0);
+        vec3 s = turnY(n, uTime * 0.02 + uBodyPx.w);
+        float bands = 0.5 + 0.5 * sin(s.y * 14.0 + fbm3Filtered(s * vec3(2.0, 8.0, 2.0), fw * 8.0) * 4.0);
         vec3 face = mix(uColourA, uColourA * vec3(1.6, 0.9, 1.2), bands) * (0.3 + 0.7 * mu);
         col = mix(col, face * 1.3, disc);
       }
-      col += uColourA * exp(-max(r - 1.0, 0.0) * 2.5) * 0.35;
+      if (front) col += uColourA * exp(-glowFrom * 2.5) * 0.35;
     }
+    if (hit.x > 0.0 && disc > 0.5) nearest = min(nearest, hit.x);
     return col;
   }
-
   #endif
 
   #if VISTA == 2
   // A binary: a giant drawn out toward its small hot companion, and the stream of gas it loses
-  // curling round into the disc about the companion. Whichever is nearer is drawn over the other.
-  vec3 companion(vec2 px, vec4 a, vec4 b, vec2 axis, float apart, vec3 col) {
-    vec2 across = vec2(-axis.y, axis.x);
-    vec2 d = px - b.xy;
-    // The disc about the companion, tilted, hot within.
-    vec2 flat2 = vec2(dot(d, axis), dot(d, across) / 0.3);
-    float r = length(flat2) / (b.z * 2.4);
-    float ring = smoothstep(0.35, 0.45, r) * (1.0 - smoothstep(0.8, 1.0, r));
-    float swirl = 0.55 + 0.55 * fbm2(vec2(atan(flat2.y, flat2.x) * 3.0 - uTime * 0.6, r * 6.0));
-    col += mix(uColourB, uColourA, r) * ring * swirl * 0.8;
-    // The stream: from the giant's nearest point, bowed round, into the disc's rim.
-    vec2 start = a.xy + axis * a.z * 1.2;
-    vec2 end = b.xy + across * b.z * 2.3 * 0.3 - axis * b.z * 0.6;
-    vec2 bend = mix(start, end, 0.5) + across * apart * 0.16;
-    float nearest = 1e6;
-    float at = 0.0;
-    for (int i = 0; i <= 16; i++) {
-      float t = float(i) / 16.0;
-      vec2 point = mix(mix(start, bend, t), mix(bend, end, t), t);
-      float gap = length(px - point);
-      if (gap < nearest) {
-        nearest = gap;
-        at = t;
-      }
-    }
-    float width = mix(a.z * 0.07, b.z * 0.3, at);
-    float stream = exp(-pow(abs(nearest) / max(width, 1.0), 2.0)) * (0.6 + 0.5 * noise2(vec2(at * 20.0 - uTime * 1.5, 3.0)));
-    col += mix(uColourA, uColourB, at) * stream * 0.9;
-    vec4 small = starFace(px, b, uColourB, 0.2);
-    col += uColourB * exp(-max(length(d) / b.z - 1.0, 0.0) * 1.4) * 0.4;
-    return mix(col, small.rgb * 1.3, small.a);
-  }
-
-  vec3 binary(vec2 px, vec3 col) {
+  // curling round into the disc about the companion, all on their orbit's plane. Whichever star is
+  // nearer covers the other, by distance along the ray.
+  vec3 binary(vec3 o, vec3 d, vec3 col, float fwA, float fwB, inout float nearest) {
     vec4 a = uBodyA;
     vec4 b = uBodyB;
-    vec2 toward = b.xy - a.xy;
+    vec3 toward = b.xyz - a.xyz;
     float apart = length(toward);
-    vec2 axis = apart > 1.0 ? toward / apart : vec2(1.0, 0.0);
-    // The giant, stretched along the axis on its companion's side.
-    vec2 q = px - a.xy;
-    float along = dot(q, axis);
-    vec2 stretched = along > 0.0 ? q - axis * along * 0.2 : q;
-    vec4 giant = starFace(a.xy + stretched, a, uColourA, 0.8);
-    col += starHalo(a.xy + stretched, a, uColourA, 0.8) * 0.7;
-    if (b.w > 0.0) {
-      col = mix(col, giant.rgb, giant.a);
-      return companion(px, a, b, axis, apart, col);
+    vec3 axis = apart > 1e-4 ? toward / apart : vec3(1.0, 0.0, 0.0);
+    vec3 across = normalize(cross(uOrbitN, axis));
+    // The giant, an ellipsoid drawn out along the axis: the ray met in the space that makes it round.
+    const float stretch = 1.15;
+    vec3 ao = o - a.xyz;
+    vec3 so = ao - axis * dot(ao, axis) * (1.0 - 1.0 / stretch);
+    vec3 sd = d - axis * dot(d, axis) * (1.0 - 1.0 / stretch);
+    float qa = dot(sd, sd);
+    float qb = dot(so, sd);
+    float qc = dot(so, so) - a.w * a.w;
+    float qh = qb * qb - qa * qc;
+    float tA = qh > 0.0 ? (-qb - sqrt(qh)) / qa : -1.0;
+    float impactA = sqrt(max(dot(so, so) - qb * qb / qa, 0.0)) / a.w;
+    float edgeA = (1.0 - smoothstep(1.0 - 1.5 * fwA, 1.0 + 0.5 * fwA, impactA)) * step(0.0, -dot(ao, d));
+    vec4 giant = vec4(0.0);
+    if (edgeA > 0.0) {
+      vec3 sp = tA > 0.0 ? so + sd * tA : so - sd * (qb / qa);
+      vec3 n = normalize(sp - axis * dot(sp, axis) * (1.0 - 1.0 / stretch));
+      float mu = max(dot(n, -d), 0.0);
+      vec3 s = turnY(n, uTime * 0.004 + uBodyPx.w);
+      float granules = fbm3Filtered(s * 30.0 + vec3(0.0, uTime * 0.03, uBodyPx.w), fwA * 30.0);
+      float magnetic = fbm3Filtered(s * 3.5 + uBodyPx.w * 7.0, fwA * 3.5);
+      float spots = smoothstep(0.66, 0.72, magnetic) * 0.8;
+      float limb = 0.3 + 0.7 * pow(mu, 0.6);
+      vec3 face = uColourA * uColourA * limb * (0.7 + 0.6 * granules);
+      face = mix(face, uColourA * vec3(0.35, 0.18, 0.1) * limb, spots * 0.85);
+      giant = vec4(face * 1.35, edgeA);
     }
-    col = companion(px, a, b, axis, apart, col);
-    return mix(col, giant.rgb, giant.a);
-  }
+    col += starHalo(o, d, a, uColourA, 0.8, uBodyPx.w, uBodyPx.x) * 0.7;
+    float tB;
+    vec4 small = starFace(o, d, b, uColourB, 0.2, uBodyPx.w + 3.0, fwB, tB);
+    // Draw the farther star first.
+    bool giantNearer = tA > 0.0 && (tB <= 0.0 || tA < tB);
+    if (giantNearer) col = mix(col, small.rgb * 1.3, small.a);
+    else col = mix(col, giant.rgb, giant.a);
+    float farT = giantNearer ? tB : tA;
+    float nearT = giantNearer ? tA : tB;
 
+    // The disc about the companion: on the orbit's plane, hot within, swirling round.
+    float denom = dot(d, uOrbitN);
+    if (abs(denom) > 1e-4) {
+      float tDisc = dot(b.xyz - o, uOrbitN) / denom;
+      if (tDisc > 0.0 && (nearT <= 0.0 || tDisc < nearT || small.a < 0.5 && giant.a < 0.5)) {
+        vec3 rel = o + d * tDisc - b.xyz;
+        float r = length(rel) / (b.w * 2.4);
+        float ring = smoothstep(0.35, 0.45, r) * (1.0 - smoothstep(0.8, 1.0, r));
+        float angle = atan(dot(rel, across), dot(rel, axis));
+        float swirl = 0.55 + 0.55 * fbm2(vec2(angle * 3.0 - uTime * 0.6, r * 6.0));
+        col += mix(uColourB, uColourA, r) * ring * swirl * 0.8;
+      }
+    }
+    // The stream: from the giant's nearest point, bowed round, into the disc's rim.
+    vec3 start = a.xyz + axis * a.w * 1.2 * stretch;
+    vec3 end = b.xyz + across * b.w * 2.3 * 0.3 - axis * b.w * 0.6;
+    vec3 bend = mix(start, end, 0.5) + across * apart * 0.16;
+    float nearestGap = 1e9;
+    float at = 0.0;
+    float atT = 0.0;
+    for (int i = 0; i <= 16; i++) {
+      float f = float(i) / 16.0;
+      vec3 point = mix(mix(start, bend, f), mix(bend, end, f), f);
+      vec3 rel = point - o;
+      float along = dot(rel, d);
+      float gap = length(rel - d * along);
+      if (along > 0.0 && gap < nearestGap) {
+        nearestGap = gap;
+        at = f;
+        atT = along;
+      }
+    }
+    float width = max(mix(a.w * 0.07, b.w * 0.3, at), uBodyPx.z * 1.2);
+    float hidden = (nearT > 0.0 && atT > nearT && (giant.a > 0.5 || small.a > 0.5)) ? 1.0 : 0.0;
+    float stream = exp(-pow(nearestGap / width, 2.0)) * (0.6 + 0.5 * noise2(vec2(at * 20.0 - uTime * 1.5, 3.0))) * (1.0 - hidden);
+    col += mix(uColourA, uColourB, at) * stream * 0.9;
+    // The companion's glow, and the nearer star over everything behind it.
+    vec3 bp = o - b.xyz;
+    float bAlong = -dot(bp, d);
+    if (bAlong > 0.0) col += uColourB * exp(-max(length(bp + d * bAlong) / b.w - 1.0, 0.0) * 1.4) * 0.4;
+    if (giantNearer) col = mix(col, giant.rgb, giant.a);
+    else col = mix(col, small.rgb * 1.3, small.a);
+    if (nearT > 0.0 && (giantNearer ? giant.a : small.a) > 0.5) nearest = min(nearest, nearT);
+    else if (farT > 0.0 && (giantNearer ? small.a : giant.a) > 0.5) nearest = min(nearest, farT);
+    return col;
+  }
   #endif
 
   #if VISTA == 5 || VISTA == 6
-  // The accretion disc's axis: nearly square to the line of sight, so the disc is seen nearly edge
-  // on, tipped toward the viewer by the tilt and turned by the roll.
+  // The accretion disc's axis, in the sky's frame: nearly square to the line of sight from home, so
+  // the disc is seen nearly edge on, tipped toward the viewer by the tilt and turned by the roll.
   vec3 discNormal() {
     float tilt = uVistaParams.x;
     float roll = uVistaParams.y;
@@ -359,34 +566,37 @@ export const VISTA_GLSL = /* glsl */ `
 
   // A black hole, or a quasar: each ray is traced back from the eye and bent round the hole as
   // light is (Schwarzschild, in units of its radius), gathering the accretion disc's light each time
-  // it crosses the disc's plane, until it falls in or leaves for the sky behind, which is then drawn
-  // where the ray points, lensed. The disc's inner edge is hot and its near side, coming toward the
-  // viewer, brighter.
-  vec3 blackHole(vec2 px, vec3 col, out bool lensed) {
+  // it crosses the disc's plane, until it falls in or leaves for the sky behind, which is then read
+  // where the ray finally points, lensed. The disc's inner edge is hot and its side coming toward
+  // the viewer, whichever that is from here, brighter.
+  vec3 blackHole(vec3 o, vec3 d, vec3 col, inout float nearest, out bool lensed) {
     lensed = false;
     vec4 hole = uBodyA;
-    vec2 d = (px - hole.xy) / hole.z;
-    float b = length(d);
+    vec3 p0 = (o - hole.xyz) / hole.w;
+    float tc = -dot(p0, d);
+    if (tc <= 0.0) return col;
+    vec3 closest = p0 + d * tc;
+    float b = length(closest);
     if (b > 22.0) return col;
     lensed = true;
+    vec3 out1 = closest / max(b, 1e-5);
     // Past the disc's reach a ray only bends a little, by the weak-field angle, and needs no tracing.
     if (b > 11.5) {
-      vec2 landing = d - (d / b) * (2.0 / b) * 48.0;
-      vec2 skyPx = hole.xy + landing * hole.z;
-      vec3 bentSky = texture2D(tNebula, clamp(skyPx / uSkySize, vec2(0.0), vec2(1.0))).rgb + starField(skyPx / uRatio);
-      return mix(bentSky, col, smoothstep(15.0, 22.0, b));
+      vec3 bent = normalize(d - out1 * (2.0 / b));
+      return mix(skyBehind(bent), col, smoothstep(15.0, 22.0, b));
     }
     vec3 normal = discNormal();
     // A disc seen square on has no line across it to measure from; any in-plane one will do.
-    vec3 across = cross(normal, vec3(0.0, 0.0, 1.0));
-    vec3 e1 = dot(across, across) > 1e-8 ? normalize(across) : vec3(1.0, 0.0, 0.0);
+    vec3 acrossDisc = cross(normal, vec3(0.0, 0.0, 1.0));
+    vec3 e1 = dot(acrossDisc, acrossDisc) > 1e-8 ? normalize(acrossDisc) : vec3(1.0, 0.0, 0.0);
     vec3 e2 = cross(normal, e1);
-    vec3 pos = vec3(d, 40.0);
-    vec3 vel = vec3(0.0, 0.0, -1.0);
+    vec3 pos = p0 + d * max(tc - 40.0, 0.0);
+    vec3 vel = d;
     vec3 h = cross(pos, vel);
     float h2 = dot(h, h);
     vec3 disc = vec3(0.0);
     float alpha = 0.0;
+    float solidAt = -1.0;
     bool captured = false;
     float side = dot(pos, normal);
     float inner = 3.0;
@@ -412,13 +622,14 @@ export const VISTA_GLSL = /* glsl */ `
         if (radius > inner && radius < outer && alpha < 0.99) {
           float angle = atan(dot(flatPos, e2), dot(flatPos, e1));
           float speed = sqrt(0.5 / radius);
-          vec3 orbit = normalize(cross(normal, flatPos)) * uVistaParams.z;
-          float doppler = 1.0 / max(0.2, 1.0 - speed * dot(orbit, -normalize(vel)));
+          vec3 orbit = cross(normal, flatPos) / radius * uVistaParams.z;
+          vec3 heading = vel * inversesqrt(max(dot(vel, vel), 1e-12));
+          float doppler = 1.0 / max(0.2, 1.0 - speed * dot(orbit, -heading));
           float beaming = pow(doppler, 3.0);
           float heat = pow(inner / radius, 1.6);
           // The disc's texture turns with it, read round a circle so it has no seam where the
           // angle wraps.
-          float turned = angle + uTime * speed * 0.6 * uVistaParams.z + hole.w;
+          float turned = angle + uTime * speed * 0.6 * uVistaParams.z + uBodyPx.w;
           float swirl = fbm3(vec3(cos(turned) * 3.0, sin(turned) * 3.0, radius * 1.6));
           float bands = 0.6 + 0.4 * sin(radius * 6.0 + swirl * 7.0);
           float density = smoothstep(inner, inner + 0.5, radius) * (1.0 - smoothstep(outer * 0.6, outer, radius)) * (0.25 + 0.75 * bands) * (0.5 + 0.7 * swirl);
@@ -427,143 +638,194 @@ export const VISTA_GLSL = /* glsl */ `
           float a = clamp(density * 0.8, 0.0, 1.0);
           disc += (1.0 - alpha) * light * a;
           alpha += (1.0 - alpha) * a;
+          if (solidAt < 0.0 && alpha > 0.5) solidAt = max(dot(crossing - p0, d), 0.0);
         }
       }
       side = nowSide;
-      if (pos.z < -40.0 || r > 60.0) break;
+      if (dot(pos, d) > 40.0 || r > 60.0) break;
     }
     vec3 behind = vec3(0.0);
     if (!captured) {
-      vec3 dir = normalize(vel);
-      float reach = (-48.0 - pos.z) / min(dir.z, -0.08);
-      vec2 landing = pos.xy + dir.xy * reach;
-      vec2 skyPx = hole.xy + landing * hole.z;
-      vec2 skyUv = clamp(skyPx / uSkySize, vec2(0.0), vec2(1.0));
-      behind = texture2D(tNebula, skyUv).rgb + starField(skyPx / uRatio);
+      behind = skyBehind(normalize(vel));
       // The photon ring: light that has circled the hole, a thin bright band at its shadow's edge.
-      float ring = exp(-pow(abs(b - 2.6) / max(0.05, 1.2 / hole.z), 2.0));
+      float ring = exp(-pow(abs(b - 2.6) / max(0.05, 1.2 / max(uBodyPx.x * uRatio, 1.0)), 2.0));
       behind += uColourA * ring * (0.2 + 0.2 * uVistaParams.w);
     }
+    if (solidAt >= 0.0) nearest = min(nearest, solidAt * hole.w);
+    else if (captured) nearest = min(nearest, tc * hole.w);
     // Far out the bending is slight: the lensed sky fades into the plain one, without a seam.
     return mix(behind * (1.0 - alpha) + disc, col, smoothstep(15.0, 22.0, b));
   }
 
-  // A quasar's jets: along the disc's axis, both ways, knotted and flickering.
-  vec3 jets(vec2 px) {
+  // A quasar's jets: along the disc's axis, both ways, knotted and flickering. Seen down its length
+  // a jet is a blinding point; seen side on, two beams.
+  vec3 jets(vec3 o, vec3 d, float nearest) {
     vec4 hole = uBodyA;
     vec3 normal = discNormal();
-    vec2 axis = length(normal.xy) > 1e-3 ? normalize(normal.xy) : vec2(0.0, 1.0);
-    vec2 d = (px - hole.xy) / hole.z;
-    float along = dot(d, axis);
-    float across = abs(dot(d, vec2(-axis.y, axis.x)));
-    float reach = abs(along);
-    float width = 0.25 + reach * 0.045;
-    float beam = exp(-pow(across / width, 2.0)) * smoothstep(1.5, 4.0, reach) * exp(-reach * 0.018);
-    float knots = 0.55 + 0.45 * sin(reach * 0.9 - uTime * 3.0 * sign(along)) * noise2(vec2(reach * 0.3, uTime * 0.5));
-    float nearSide = along * sign(normal.z) > 0.0 ? 1.0 : 0.55;
-    vec3 colour = mix(vec3(0.55, 0.7, 1.4), vec3(0.8, 0.5, 1.2), smoothstep(10.0, 60.0, reach));
+    vec3 p0 = (o - hole.xyz) / hole.w;
+    float a = dot(d, normal);
+    float dd = dot(d, p0);
+    float e = dot(normal, p0);
+    float denom = 1.0 - a * a;
+    float tRay;
+    float reach;
+    float gap;
+    if (denom < 1e-4) {
+      tRay = -dd;
+      reach = 40.0;
+      gap = length(p0 - normal * e);
+    } else {
+      tRay = (a * e - dd) / denom;
+      float s = (e - a * dd) / denom;
+      reach = s;
+      gap = length(p0 + d * tRay - normal * s);
+    }
+    if (tRay <= 0.0 || tRay * hole.w > nearest) return vec3(0.0);
+    float along = abs(reach);
+    float width = 0.25 + along * 0.045;
+    float beam = exp(-pow(gap / width, 2.0)) * smoothstep(1.5, 4.0, along) * exp(-along * 0.018);
+    float knots = 0.55 + 0.45 * sin(along * 0.9 - uTime * 3.0 * sign(reach)) * noise2(vec2(along * 0.3, uTime * 0.5));
+    float nearSide = sign(reach) * dot(normal, -d) > 0.0 ? 1.0 : 0.55;
+    vec3 colour = mix(vec3(0.55, 0.7, 1.4), vec3(0.8, 0.5, 1.2), smoothstep(10.0, 60.0, along));
     return colour * beam * (0.6 + knots) * nearSide * 1.3;
   }
-
   #endif
 
   #if VISTA == 1
-  // A solar system as an orrery: the star, each world's orbit traced as a faint dashed ellipse in
-  // the site's cyan, an asteroid belt on one of them, and the worlds themselves, lit from the star,
-  // passing behind it on the far side of their orbits.
-  vec3 solarSystem(vec2 px, vec3 col) {
+  // A solar system as an orrery: the star, each world's orbit traced as a faint dashed circle in the
+  // site's cyan on one plane, an asteroid belt on one of them, and the worlds themselves, lit from
+  // the star, passing behind it on the far side of their orbits and in front of it on the near.
+  vec3 solarSystem(vec3 o, vec3 d, vec3 col, float fwStar, inout float nearest) {
     vec4 star = uBodyA;
-    float incline = uVistaParams.x;
-    float turn = uVistaParams.y;
     float belt = uVistaParams.z;
-    vec2 d = px - star.xy;
-    float c = cos(turn);
-    float s = sin(turn);
-    // Down the screen is up in these pixels, so the turn goes the other way.
-    vec2 local = vec2(c * d.x - s * d.y, s * d.x + c * d.y);
+    float pxWorld = uBodyPx.z;
+    // The orbits' plane: where the ray meets it, and how far that is from the star.
+    float denom = dot(d, uOrbitN);
+    float tPlane = abs(denom) > 1e-5 ? dot(star.xyz - o, uOrbitN) / denom : -1.0;
+    vec3 rel = o + d * tPlane - star.xyz;
+    float rho = length(rel);
+    float fwRho = max(fwidth(rho), 1e-5);
+    float angle = atan(dot(rel, uOrbitV), dot(rel, uOrbitU));
+    // Every solid thing along the ray, nearest first by distance, found before anything is drawn.
+    float tStar;
+    vec2 starHit = sphereHit(o, d, star);
+    tStar = starHit.x;
+    float starEdge = (1.0 - smoothstep(1.0 - 1.5 * fwStar, 1.0 + 0.5 * fwStar, starHit.y)) * step(0.0, -dot(o - star.xyz, d));
+    float tSolid = starEdge > 0.5 && tStar > 0.0 ? tStar : 1e9;
+    vec4 worldLit[8];
+    float worldT[8];
     for (int i = 0; i < 8; i++) {
+      worldLit[i] = vec4(0.0);
+      worldT[i] = -1.0;
       if (float(i) >= uWorldCount) break;
-      vec4 orbit = uOrbits[i];
-      vec2 e = local / orbit.xy;
-      float ellipse = length(e);
-      float gap = abs(ellipse - 1.0) * min(orbit.x, orbit.y);
-      float angle = atan(e.y, e.x);
-      if (abs(float(i) - belt) < 0.5) {
-        // The belt: a scatter of rocks along the orbit.
-        vec2 cell = vec2(angle * orbit.x * 0.12, (ellipse - 1.0) * orbit.y * 0.25);
-        vec2 id = floor(cell);
-        float rock = step(0.75, hash21(id)) * exp(-dot(fract(cell) - 0.5, fract(cell) - 0.5) * 30.0);
-        col += vec3(0.7, 0.65, 0.6) * rock * exp(-gap * gap / (orbit.y * orbit.y * 0.004)) * 0.6;
-      } else {
-        float dash = step(0.4, fract(angle * orbit.x / (6.2832 * 7.0)));
-        col += uAccent * exp(-gap * gap * 1.4 / (uRatio * uRatio)) * 0.08 * dash;
+      vec4 w = uWorlds[i];
+      vec2 hit = sphereHit(o, d, w);
+      float fw = max(fwidth(hit.y), 1e-4);
+      bool front = dot(w.xyz - o, d) > 0.0;
+      float disc = (1.0 - smoothstep(1.0 - 1.5 * fw, 1.0, hit.y)) * (front ? 1.0 : 0.0);
+      // A thin cyan halo round each world, to show it can be jumped to.
+      float halo = front ? exp(-pow(abs(hit.y - 1.35) / 0.07, 2.0)) * 0.12 : 0.0;
+      if (disc <= 0.0 && halo <= 0.0) continue;
+      vec3 n = sphereNormal(o, d, w, hit.x);
+      vec3 toStar = normalize(star.xyz - w.xyz);
+      float bands = fbm3Filtered(n * 3.0 + float(i) * 13.0, fw * 3.0);
+      vec3 surface = mix(uWorldTint[i], uWorldTintB[i], smoothstep(0.4, 0.6, bands));
+      vec3 lit = surface * (max(dot(n, toStar), 0.0) * uColourA * 2.6 + 0.08);
+      lit += uColourA * pow(1.0 - max(dot(n, -d), 0.0), 3.0) * max(dot(n, toStar), 0.0) * 0.5;
+      worldLit[i] = vec4(lit, disc);
+      worldT[i] = front ? max(hit.x, dot(w.xyz - o, d) - w.w) : -1.0;
+      col += uAccent * halo * (tSolid < worldT[i] ? 0.0 : 1.0);
+      if (disc > 0.5 && hit.x > 0.0) tSolid = min(tSolid, hit.x);
+    }
+    // The orbits and the belt, on their plane, where nothing solid stands in front of them.
+    if (tPlane > 0.0 && tPlane < tSolid) {
+      for (int i = 0; i < 8; i++) {
+        if (float(i) >= uWorldCount) break;
+        float a = uOrbitRadii[i];
+        float gap = abs(rho - a);
+        if (abs(float(i) - belt) < 0.5) {
+          vec2 cell = vec2(angle * a / pxWorld * 0.12, (rho - a) / pxWorld * 0.25);
+          vec2 id = floor(cell);
+          float rock = step(0.75, hash21(id)) * exp(-dot(fract(cell) - 0.5, fract(cell) - 0.5) * 30.0);
+          col += vec3(0.7, 0.65, 0.6) * rock * exp(-gap * gap / (a * a * 0.0016)) * 0.6;
+        } else {
+          float dash = step(0.4, fract(angle * a / (pxWorld * 44.0)));
+          col += uAccent * exp(-pow(gap / fwRho, 2.0) * 1.4 / (uRatio * uRatio)) * 0.08 * dash;
+        }
       }
     }
-    // The worlds behind the star, the star, then the worlds in front.
+    // The worlds behind the star, the star and its glow, then the worlds before it.
     for (int pass = 0; pass < 2; pass++) {
       if (pass == 1) {
-        vec4 face = starFace(px, star, uColourA, 0.5);
-        col += uColourA * exp(-max(length(d) / star.z - 1.0, 0.0) * 0.9) * 0.45;
+        vec3 sp = o - star.xyz;
+        float along = -dot(sp, d);
+        if (along > 0.0) col += uColourA * exp(-max(length(sp + d * along) / star.w - 1.0, 0.0) * 0.9) * 0.45;
+        float t;
+        vec4 face = starFace(o, d, star, uColourA, 0.5, uBodyPx.w, fwStar, t);
         col = mix(col, face.rgb * 1.3, face.a);
       }
       for (int i = 0; i < 8; i++) {
         if (float(i) >= uWorldCount) break;
-        vec4 w = uWorlds[i];
-        if ((w.w > 0.5) != (pass == 0)) continue;
-        vec2 q = (px - w.xy) / w.z;
-        float r = length(q);
-        if (r > 1.6) continue;
-        float disc = 1.0 - smoothstep(1.0 - 1.5 / w.z, 1.0, r);
-        vec3 n = vec3(q, sqrt(max(0.0, 1.0 - r * r)));
-        vec3 toStar = normalize(vec3((star.xy - w.xy) / max(length(star.xy - w.xy), 1.0), 0.35));
-        float bands = fbm3Filtered(n * 3.0 + float(i) * 13.0, 3.0 / w.z);
-        vec3 surface = mix(uWorldTint[i], uWorldTintB[i], smoothstep(0.4, 0.6, bands));
-        vec3 lit = surface * (max(dot(n, toStar), 0.0) * uColourA * 2.6 + 0.08);
-        lit += uColourA * pow(1.0 - n.z, 3.0) * max(dot(normalize(q + vec2(0.0, 1e-4)), normalize(star.xy - w.xy + vec2(0.0, 1e-4))), 0.0) * 0.5;
-        col = mix(col, lit, disc);
-        col += uAccent * exp(-pow(abs(r - 1.35) / 0.07, 2.0)) * 0.12;
+        if (worldLit[i].a <= 0.0) continue;
+        bool behindStar = starEdge > 0.5 && tStar > 0.0 && worldT[i] > tStar;
+        if (behindStar != (pass == 0)) continue;
+        col = mix(col, worldLit[i].rgb, worldLit[i].a);
       }
     }
+    if (tSolid < 1e8) nearest = min(nearest, tSolid);
     return col;
   }
-
   #endif
 
   #if VISTA == 9
   // The heat death: what is left after the stars (dimmed and put out in the star field itself) is a
   // small black hole, glowing faintly as it evaporates, until it goes with a last flash. A click
   // starts it all again: a point of light blowing out into a fireball, white-hot, cooling through
-  // yellow and orange to a mottled red as it fills the sky.
-  vec3 heatDeath(vec2 px, vec3 col) {
+  // yellow and orange to a mottled red as it fills the sky and swallows the viewer.
+  vec3 heatDeath(vec3 o, vec3 d, vec3 col, float fw, inout float nearest) {
     float progress = uVistaParams.x;
     vec4 hole = uBodyA;
-    float r = length(px - hole.xy) / hole.z;
+    vec2 hit = sphereHit(o, d, hole);
+    float r = hit.y;
+    bool front = dot(hole.xyz - o, d) > 0.0;
     float gone = smoothstep(0.9, 0.905, progress);
-    float disc = 1.0 - smoothstep(1.0 - 1.5 / hole.z, 1.0, r);
+    float disc = (1.0 - smoothstep(1.0 - 1.5 * fw, 1.0, r)) * (front ? 1.0 : 0.0);
     col = mix(col, vec3(0.0), disc * (1.0 - gone));
-    col += vec3(0.7, 0.45, 1.0) * exp(-max(r - 1.0, 0.0) * 0.9) * (0.1 + 0.06 * sin(uTime * 2.3)) * (1.0 - gone);
-    col += vec3(1.3, 1.2, 1.4) * exp(-pow(abs(progress - 0.9) * 90.0, 2.0)) * exp(-r * 0.25) * 3.0;
+    if (front) {
+      col += vec3(0.7, 0.45, 1.0) * exp(-max(r - 1.0, 0.0) * 0.9) * (0.1 + 0.06 * sin(uTime * 2.3)) * (1.0 - gone);
+      col += vec3(1.3, 1.2, 1.4) * exp(-pow(abs(progress - 0.9) * 90.0, 2.0)) * exp(-r * 0.25) * 3.0;
+    }
+    if (hit.x > 0.0 && disc * (1.0 - gone) > 0.5) nearest = min(nearest, hit.x);
     vec4 bang = uBodyB;
-    if (bang.z > 0.0) {
-      float age = bang.z;
-      vec2 d = (px - bang.xy) / uRatio;
-      float reach = 1600.0 * (1.0 - exp(-age * 1.2));
-      float rr = length(d) / max(reach, 1.0);
-      float inside = 1.0 - smoothstep(0.9, 1.0, rr);
+    if (bang.w > 0.0) {
+      float age = uBangAge;
+      vec3 p = o - bang.xyz;
+      float along = -dot(p, d);
+      float inside = 0.0;
+      float rr = 1.0;
+      float gapPx = 1e6;
+      if (dot(p, p) < bang.w * bang.w) {
+        inside = 1.0;
+        rr = length(p) / bang.w * 0.6;
+      } else if (along > 0.0) {
+        float gap = length(p + d * along);
+        inside = 1.0 - smoothstep(0.9 * bang.w, bang.w, gap);
+        rr = gap / bang.w;
+        gapPx = gap / uBodyPx.z;
+      }
       float temperature = exp(-age * 0.8) * (1.25 - 0.45 * rr);
       vec3 fire = mix(vec3(0.7, 0.12, 0.04), vec3(1.4, 1.1, 0.7), smoothstep(0.08, 0.5, temperature));
       fire = mix(fire, vec3(1.5, 1.6, 2.0), smoothstep(0.55, 1.1, temperature));
-      float mottle = 0.7 + 0.6 * fbm2(d * 0.018 + vec2(age * 0.2, 3.0));
+      float mottle = 0.7 + 0.6 * fbm3Lite(d * 6.0 + vec3(age * 0.2, 3.0, 0.0));
       col = mix(col, fire * (0.8 + 2.4 * temperature) * mottle, inside);
-      col += vec3(1.5, 1.4, 1.3) * exp(-length(d) / (6.0 + age * 50.0)) * exp(-age * 0.9) * 5.0;
+      col += vec3(1.5, 1.4, 1.3) * exp(-gapPx / (6.0 + age * 50.0)) * exp(-age * 0.9) * 5.0;
     }
     return col;
   }
-
   #endif
 
   #if VISTA == 8
-  // The Death Star's surface, for the planet's disc: grey plating in rectangles, the equatorial
+  // The Death Star's surface, for the planet's sphere: grey plating in rectangles, the equatorial
   // trench, the superlaser's dish in the northern hemisphere, and lights across the dark side. The
   // second one is unfinished: past a ragged edge only its skeleton stands against the stars.
   vec4 deathStar(vec3 n, vec3 t, vec3 sun, float footprint, bool second) {

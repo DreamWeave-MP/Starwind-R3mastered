@@ -190,8 +190,11 @@ export function createEnvironment({ sky, composite, sunDir, sunColor, reduceMoti
       // A binary: the stars take turns lighting the hulls as the companion swings round, each in
       // its own colour, so highlights and shadows slide across every ship.
       if (placed && (vista.kind === 'binary' || is('binary')) && placed.b[2] > 0) {
-        lightFrom(placed.a[0] / kit.view.ratio, kit.view.height - placed.a[1] / kit.view.ratio, lightA);
-        lightFrom(placed.b[0] / kit.view.ratio, kit.view.height - placed.b[1] / kit.view.ratio, lightB);
+        // [r3:orbit] Toward each star where it stands, when the hero knows.
+        if (placed.dirA) lightA.copy(placed.dirA);
+        else lightFrom(placed.a[0] / kit.view.ratio, kit.view.height - placed.a[1] / kit.view.ratio, lightA);
+        if (placed.dirB) lightB.copy(placed.dirB);
+        else lightFrom(placed.b[0] / kit.view.ratio, kit.view.height - placed.b[1] / kit.view.ratio, lightB);
         const turn = 0.5 + 0.5 * Math.sin(clock * 0.45 + placed.a[3]);
         const w = turn * turn * (3 - 2 * turn);
         shipSun.value.copy(lightA).lerp(lightB, w);
@@ -241,7 +244,7 @@ export function createEnvironment({ sky, composite, sunDir, sunColor, reduceMoti
         const elevation = (Math.hypot(sunPx.x - disc.x, sunPx.y - disc.y) - disc.z) / Math.max(disc.z, 1);
         let graze = 1 - THREE.MathUtils.smoothstep(elevation, 0.004, 0.02);
         let shade = 0;
-        for (const moon of [sky.uMoonA.value, sky.uMoonB.value]) {
+        for (const moon of sky.uMoonPxA ? [sky.uMoonPxA.value, sky.uMoonPxB.value] : [sky.uMoonA.value, sky.uMoonB.value]) { // [r3:orbit] where they show
           if (moon.z <= 0) continue;
           const overlap = 1 - THREE.MathUtils.smoothstep(Math.hypot(sunPx.x - moon.x, sunPx.y - moon.y), moon.z * 0.4, moon.z * 1.3);
           shade = Math.max(shade, overlap);

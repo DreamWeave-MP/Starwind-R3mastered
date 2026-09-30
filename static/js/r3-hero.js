@@ -28,14 +28,14 @@
 
 import * as THREE from './vendor/three.module.min.js';
 import { pickWorld, WORLDS } from './r3-worlds.js';
-import { pickVista, placeVista, VISTA_GLSL } from './r3-vistas.js';
+import { pickVista, placeVista, liftVista, createLift, VISTA_GLSL } from './r3-vistas.js';
 import { createFleet } from './r3-ships.js';
 import { createMemory } from './r3-memory.js'; // [r3:memory]
 import { createDirector } from './r3-events.js'; // [r3:director]
 import { createEnvironment } from './r3-environment.js'; // [r3:environment]
 import { pickScenario } from './r3-shipyard.js';
 import { decorateSurvey } from './r3-guide.js'; // [r3:guide]
-import { createOrbit } from './r3-camera.js'; // [r3:navigator]
+import { createOrbit } from './r3-camera.js'; // [r3:orbit]
 import { createSensors } from './r3-sensors.js'; // [r3:gunnery]
 import { createNav } from './r3-nav.js'; // [r3:chart]
 import { createPilot } from './r3-pilot.js'; // [r3:pilot]
@@ -134,76 +134,109 @@ const NOISE = /* glsl */ `
   }
 `;
 
-// The nebulae, at half resolution: domain-warped noise, cyan high on the right, violet low on the
-// left, with ridged filaments through the cyan.
+// The nebulae, on a cube round the viewer, so they keep their place in the sky as the view turns:
+// domain-warped noise over directions, cyan high on the right of home, violet low on the left, with
+// ridged filaments through the cyan. One face is drawn at a time; they change slowly enough that a
+// face every other frame keeps up.
 const NEBULA_FRAGMENT = /* glsl */ `
   precision highp float;
-  varying vec2 vUv;
   uniform float uTime;
-  uniform float uAspect;
-  uniform vec2 uDrift;
-  uniform vec2 uScroll;      // the orbit's drift, css pixels, far layer
-  uniform float uHeight;     // the hero's height, css pixels
+  uniform float uFace;       // the face being drawn: 0 to 5 for +x, -x, +y, -y, +z, -z
+  uniform float uSize;       // its width, in texels
+  uniform float uHalfSpan;   // the tangent of half the home view's height, for the sky's gradient
   uniform vec3 uTop;
   uniform vec3 uBottom;
   uniform vec3 uCyan;
   uniform vec3 uViolet;
   uniform vec3 uThird;       // a third cloud, in the colour of the world's air
-  // This visit's sky (r3-worlds.js): where each cloud sits, as fractions of the hero's width and
-  // height, how far it spreads and how bright it is, the noise's offset, scale and warp.
-  uniform vec4 uCloudsAt;    // cyan x, y, violet x, y
-  uniform vec2 uThirdAt;
+  // This visit's sky (r3-worlds.js): where each cloud sits, as directions in the sky's frame, how far
+  // it spreads (radians) and how bright it is, and the noise's offset, frequency per radian and warp.
+  uniform vec3 uCyanAt;
+  uniform vec3 uVioletAt;
+  uniform vec3 uThirdAt;
   uniform vec3 uSpread;
   uniform vec3 uStrength;
-  uniform vec4 uNoise;       // offset x, y, scale, warp
+  uniform vec4 uNoise;
   uniform float uFade;       // the clouds going dark, at the heat death
   ${NOISE}
-  float cloudMask(vec2 p, vec2 at, float spread) {
-    vec2 d = (p - vec2(at.x * uAspect, at.y)) / spread;
-    return exp(-dot(d, d) * 3.0);
+  float fbm3n(vec3 p) {
+    float v = 0.0;
+    float a = 0.5;
+    for (int i = 0; i < 4; i++) {
+      v += a * noise3(p);
+      p = p * 2.03 + vec3(1.7, 9.2, 3.1);
+      a *= 0.5;
+    }
+    return v + 0.0625;
+  }
+  // A texel of a cube's face as the direction a cube lookup finds it by (the GL convention).
+  vec3 faceDirection(vec2 st) {
+    if (uFace < 0.5) return vec3(1.0, -st.y, -st.x);
+    if (uFace < 1.5) return vec3(-1.0, -st.y, st.x);
+    if (uFace < 2.5) return vec3(st.x, 1.0, st.y);
+    if (uFace < 3.5) return vec3(st.x, -1.0, -st.y);
+    if (uFace < 4.5) return vec3(st.x, -st.y, 1.0);
+    return vec3(-st.x, -st.y, -1.0);
+  }
+  float cloudMask(vec3 dir, vec3 at, float spread) {
+    vec3 d = dir - at;
+    return exp(-dot(d, d) / (spread * spread) * 3.0);
   }
   void main() {
-    vec2 p = vec2(vUv.x * uAspect, vUv.y) + uDrift * 0.35 + uScroll * (0.35 / max(uHeight, 1.0));
-    vec3 col = mix(uBottom, uTop, smoothstep(0.0, 1.0, vUv.y));
-    vec2 n = p * uNoise.z + uNoise.xy;
-    vec2 warp = vec2(fbm2(n * 1.4 + vec2(0.0, uTime * 0.011)), fbm2(n * 1.4 + vec2(5.2, 1.3) - uTime * 0.009));
-    float cloud = fbm2(n * 1.9 + warp * uNoise.w + uTime * 0.006);
-    float wisp = fbm2(n * 2.7 - warp * uNoise.w * 1.3 + vec2(3.1, 7.7));
-    float ridge = 1.0 - abs(2.0 * fbm2(n * 3.3 + warp * 2.2 - uTime * 0.004) - 1.0);
+    vec3 dir = normalize(faceDirection(gl_FragCoord.xy / uSize * 2.0 - 1.0));
+    // Brighter above the horizon of home than below, as the still is.
+    float elevation = dir.y * inversesqrt(max(dot(dir.xz, dir.xz), 1e-6));
+    vec3 base = mix(uBottom, uTop, smoothstep(-uHalfSpan, uHalfSpan, elevation));
+    vec3 n = dir * uNoise.z + vec3(uNoise.xy, 0.0);
+    vec3 warp = vec3(fbm3n(n * 1.4 + vec3(0.0, uTime * 0.011, 0.0)), fbm3n(n * 1.4 + vec3(5.2, 1.3, 2.1) - uTime * 0.009), 0.0);
+    warp.z = warp.x - warp.y;
+    float cloud = fbm3n(n * 1.9 + warp * uNoise.w + uTime * 0.006);
+    float wisp = fbm3n(n * 2.7 - warp * uNoise.w * 1.3 + vec3(3.1, 7.7, 1.9));
+    float ridge = 1.0 - abs(2.0 * fbm3n(n * 3.3 + warp * 2.2 - uTime * 0.004) - 1.0);
     ridge = clamp(ridge, 0.0, 1.0);
 
-    float cyanMask = cloudMask(p, uCloudsAt.xy, uSpread.x);
-    float violetMask = cloudMask(p, uCloudsAt.zw, uSpread.y);
-    float thirdMask = cloudMask(p, uThirdAt, uSpread.z);
+    float cyanMask = cloudMask(dir, uCyanAt, uSpread.x);
+    float violetMask = cloudMask(dir, uVioletAt, uSpread.y);
+    float thirdMask = cloudMask(dir, uThirdAt, uSpread.z);
 
+    vec3 col = base;
     col += uCyan * cyanMask * (0.025 + 0.075 * smoothstep(0.4, 0.85, cloud)) * uStrength.x;
     col += uCyan * cyanMask * pow(ridge, 8.0) * 0.05 * uStrength.x;
     col += uViolet * violetMask * (0.03 + 0.07 * smoothstep(0.45, 0.9, cloud)) * uStrength.y;
     col += uThird * thirdMask * (0.02 + 0.06 * smoothstep(0.5, 0.9, wisp)) * uStrength.z;
     // Dark lanes of dust across the brightest cloud.
     col *= 1.0 - 0.35 * smoothstep(0.55, 0.8, wisp) * cyanMask * uStrength.x;
-    col = mix(col, mix(uBottom, uTop, smoothstep(0.0, 1.0, vUv.y)) * (1.0 - 0.8 * uFade), uFade);
+    col = mix(col, base * (1.0 - 0.8 * uFade), uFade);
     gl_FragColor = vec4(col, 1.0);
   }
 `;
 
-// The sky and the planet, at full resolution. Positions are in device pixels with y up.
+// The sky, at full resolution: each pixel's ray, from the camera through the backdrop, which stands
+// in the sky's frame about its focus. The orbit is the turn from the camera's frame into the sky's,
+// so the ray is turned and the scene stays put. Everything solid the ray meets writes its depth, as
+// the camera would, so the ships drawn after it hide behind the planet, a star or a hole exactly
+// where they pass behind it.
 const SKY_FRAGMENT = /* glsl */ `
   precision highp float;
-  varying vec2 vUv;
-  uniform sampler2D tNebula;
+  uniform samplerCube tNebula;
   uniform float uTime;
   uniform float uRatio;
-  uniform vec2 uDrift;
-  uniform vec2 uScroll;      // the orbit's drift, css pixels, far layer
-  uniform vec3 uHyper;       // hyperspace: the stars' stretch, how much of the planet shows, the tunnel
-  uniform vec2 uHyperAt;     // the vanishing point, device pixels
-  uniform float uDying;      // at the heat death, how many of the stars have gone out, 0 to 1
-  uniform vec3 uPlanet;      // centre x, y and radius, in device pixels
-  uniform vec3 uSunDir;      // towards the sun, view space: x right, y up, z to the viewer
+  uniform vec2 uSkySize;         // the canvas, device pixels
+  uniform vec3 uCamPos;          // the camera, in its own frame (the ships')
+  uniform mat4 uInvViewProj;     // clip space into the camera's frame
+  uniform mat4 uViewProj;        // and back, for the depth written
+  uniform mat3 uSkyFromCamera;   // the orbit: a ray of the scene turned into the sky's frame
+  uniform vec3 uSkyEye;          // the camera, in the sky's frame
+  uniform float uPixelTan;       // the tangent a css pixel spans, for the stars' size
+  uniform vec3 uHyper;           // hyperspace: the stars' stretch, how much of the backdrop shows, the tunnel
+  uniform vec2 uHyperAt;         // the vanishing point, device pixels
+  uniform vec3 uHyperDir;        // and as a direction, in the sky's frame
+  uniform float uDying;          // at the heat death, how many of the stars have gone out, 0 to 1
+  uniform vec4 uPlanet;          // the planet: centre in the sky's frame, and radius
+  uniform vec3 uSunDir;          // toward the sun, in the sky's frame
   uniform vec3 uSunColor;
-  uniform mat3 uBody;       // view space to the planet's turning surface
-  uniform mat3 uCloudBody;  // the same for the cloud deck, which turns a little faster
+  uniform mat3 uBody;            // the sky's frame to the planet's turning surface
+  uniform mat3 uCloudBody;       // the same for the cloud deck, which turns a little faster
   uniform vec3 uAccent;
   uniform vec3 uNight;
   uniform vec3 uAir;
@@ -213,28 +246,85 @@ const SKY_FRAGMENT = /* glsl */ `
   uniform vec3 uHighland;
   uniform vec3 uCloud;
   uniform vec3 uCity;
-  uniform vec4 uWorldA;     // sea level, cloud threshold, settlement, feature scale
-  uniform vec4 uWorldB;     // ice, lava, bands, floating cities
-  uniform vec4 uWorldC;     // open water (0 on a dry world), aurora, rings (1 when it has them)
-  uniform vec3 uSeed;       // this load's offset into the noise, so no two visits match
-  uniform vec3 uRingNormal; // square to the ring plane, view space
+  uniform vec4 uWorldA;          // sea level, cloud threshold, settlement, feature scale
+  uniform vec4 uWorldB;          // ice, lava, bands, floating cities
+  uniform vec4 uWorldC;          // open water (0 on a dry world), aurora, rings (1 when it has them)
+  uniform vec3 uSeed;            // this load's offset into the noise, so no two visits match
+  uniform vec3 uRingNormal;      // square to the ring plane, in the sky's frame
   uniform vec3 uRingColor;
   uniform float uRingSeed;
-  uniform vec4 uMoonA;      // small moons: centre x, y and radius in device pixels, and a seed
+  uniform vec4 uMoonA;           // small moons: centre in the sky's frame and radius
   uniform vec4 uMoonB;
+  uniform vec2 uMoonSeeds;
   uniform vec3 uMoonColorA;
   uniform vec3 uMoonColorB;
-  uniform vec3 uBetaR;      // Rayleigh scattering at the ground, per planet radius, per channel
-  uniform float uBetaM;     // Mie scattering at the ground, the same for every channel
-  uniform vec3 uAirShape;   // the Rayleigh and Mie scale heights, and the shell's top
+  uniform vec3 uBetaR;           // Rayleigh scattering at the ground, per planet radius, per channel
+  uniform float uBetaM;          // Mie scattering at the ground, the same for every channel
+  uniform vec3 uAirShape;        // the Rayleigh and Mie scale heights, and the shell's top
   // [r3:howard] The uncharted world's face: albedo with its mask, relief, and where on the body.
   uniform sampler2D tFace;
   uniform sampler2D tFaceRelief;
-  uniform vec4 uFace;       // strength, size in tangent units, the eyes' offset x and y
+  uniform vec4 uFace;            // strength, size in tangent units, the eyes' offset x and y
   uniform vec3 uFaceRight;
   uniform vec3 uFaceUp;
   uniform vec3 uFaceCentre;
   ${NOISE}
+
+  // Pinpoints in hashed cells, one layer per call; a few bright ones carry the four-pointed spikes
+  // of the mark. Offsets stay in the middle of a cell so a spike never crosses its edge. css: a
+  // point of a cube's face, in css pixels of the view.
+  vec3 starLayer(vec2 css, float cell, float seed, float spikes) {
+    vec2 g = css / cell + seed * 17.0;
+    vec2 id = floor(g);
+    vec2 f = fract(g) - 0.5;
+    float h = hash21(id + seed);
+    if (h > 0.34) return vec3(0.0);
+    vec2 offset = (vec2(hash21(id + 3.1), hash21(id + 7.7)) - 0.5) * 0.45;
+    vec2 d = (f - offset) * cell;
+    // At least a pixel wide, or a star crossing pixel centres as the view turns twinkles.
+    float size = 0.85 + 0.7 * hash21(id + 11.3);
+    float twinkle = 0.6 + 0.4 * sin(uTime * (0.6 + 1.9 * h) + h * 60.0);
+    float core = exp(-dot(d, d) / (size * size));
+    vec3 tint = mix(vec3(0.75, 0.92, 1.0), vec3(1.0, 0.93, 0.82), hash21(id + 5.5));
+    // At the heat death each star goes out at its own moment, flaring as it goes, the last red.
+    float death = hash21(id + 23.7);
+    float alive = smoothstep(uDying - 0.004, uDying + 0.004, death);
+    float going = uDying > 0.0 ? exp(-pow(abs(death - uDying) * 160.0, 2.0)) : 0.0;
+    tint = mix(tint, vec3(1.0, 0.42, 0.28), smoothstep(0.35, 0.9, uDying));
+    float bright = step(0.3, h) * spikes;
+    float spike = bright * (exp(-abs(d.y) * 1.6) * exp(-abs(d.x) * 0.16) + exp(-abs(d.x) * 1.6) * exp(-abs(d.y) * 0.16));
+    return tint * (core * (0.9 + 2.5 * bright) + spike * 0.55) * twinkle * alive + tint * core * going * 4.0;
+  }
+
+  // The stars in a direction: three layers of cells on each face of a cube round the viewer, a css
+  // pixel of the view across at a face's middle, so they keep their place as the view turns.
+  vec3 starsAt(vec3 dir) {
+    vec3 a = abs(dir);
+    vec2 uv;
+    float face;
+    if (a.x >= a.y && a.x >= a.z) {
+      uv = dir.yz / a.x;
+      face = dir.x > 0.0 ? 0.0 : 1.0;
+    } else if (a.y >= a.z) {
+      uv = dir.zx / a.y;
+      face = dir.y > 0.0 ? 2.0 : 3.0;
+    } else {
+      uv = dir.xy / a.z;
+      face = dir.z > 0.0 ? 4.0 : 5.0;
+    }
+    vec2 css = uv / uPixelTan;
+    float seed = face * 5.0;
+    return starLayer(css, 61.0, 1.0 + seed, 0.0)
+         + starLayer(css, 97.0, 2.0 + seed, 0.0) * 0.8
+         + starLayer(css, 173.0, 3.0 + seed, 1.0);
+  }
+
+  // The sky behind everything, in a direction: what a black hole's bent rays find.
+  vec3 skyBehind(vec3 dir) {
+    return textureCube(tNebula, dir).rgb + starsAt(dir);
+  }
+
+  ${VISTA_GLSL}
 
   // The atmosphere, scattered for real: a shell of air over the planet, thinning exponentially
   // with height, its molecules (Rayleigh) scattering the short wavelengths of the world's air colour
@@ -263,17 +353,21 @@ const SKY_FRAGMENT = /* glsl */ `
     for (int i = 0; i < 4; i++) depth += airDensity(p + s * ((float(i) + 0.5) * stepLength)) * stepLength;
     return extinction(depth) * lit;
   }
-  // The light the air scatters toward the viewer along the ray through q, and how much of what
-  // lies behind it gets through. The view is along -z; the ray ends at the ground or leaves the
-  // shell again.
-  void scatter(vec2 q, float r, vec3 sun, out vec3 gathered, out vec3 through) {
+  // The light the air scatters toward the viewer along the ray from o in direction d (planet
+  // units, o outside the shell), and how much of what lies behind gets through. The ray ends at
+  // the ground (ground > 0) or leaves the shell again.
+  void scatter(vec3 o, vec3 d, float ground, vec3 sun, out vec3 gathered, out vec3 through) {
     gathered = vec3(0.0);
     through = vec3(1.0);
-    if (r >= uAirShape.z) return;
-    float top = sqrt(uAirShape.z * uAirShape.z - r * r);
-    float bottom = r < 1.0 ? sqrt(1.0 - r * r) : -top;
-    float stepLength = (top - bottom) * 0.1;
-    float mu = -sun.z;
+    float b = dot(o, d);
+    float h = b * b - dot(o, o) + uAirShape.z * uAirShape.z;
+    if (h <= 0.0) return;
+    float enter = max(-b - sqrt(h), 0.0);
+    float leave = -b + sqrt(h);
+    if (leave <= 0.0) return;
+    float end = ground > 0.0 ? min(leave, ground) : leave;
+    float stepLength = (end - enter) * 0.1;
+    float mu = dot(d, sun);
     float phaseR = 0.0596831 * (1.0 + mu * mu);
     const float g = 0.76;
     float phaseM = 0.0795775 * (1.0 - g * g) / pow(1.0 + g * g - 2.0 * g * mu, 1.5);
@@ -281,36 +375,38 @@ const SKY_FRAGMENT = /* glsl */ `
     vec3 sumR = vec3(0.0);
     vec3 sumM = vec3(0.0);
     for (int i = 0; i < 10; i++) {
-      vec3 p = vec3(q, top - (float(i) + 0.5) * stepLength);
-      vec2 d = airDensity(p) * stepLength;
-      depth += d;
+      vec3 p = o + d * (enter + (float(i) + 0.5) * stepLength);
+      vec2 dd = airDensity(p) * stepLength;
+      depth += dd;
       vec3 light = extinction(depth) * sunlightAt(p, sun);
-      sumR += d.x * light;
-      sumM += d.y * light;
+      sumR += dd.x * light;
+      sumM += dd.y * light;
     }
     gathered = (sumR * uBetaR * phaseR + sumM * uBetaM * phaseM) * uSunColor * 4.0;
     through = extinction(depth);
   }
 
-  // A small moon: a crater-mottled disc lit by the same sun, usually a crescent, since the sun is
-  // behind the planet.
-  vec3 moon(vec3 col, vec2 px, vec4 m, vec3 tint, vec3 sun) {
-    if (m.z <= 0.0) return col;
-    vec2 d = (px - m.xy) / m.z;
-    float rr = dot(d, d);
-    if (rr > 1.44) return col;
-    float disc = 1.0 - smoothstep(1.0 - 1.5 / m.z, 1.0 + 0.5 / m.z, sqrt(rr));
-    vec3 n = vec3(d, sqrt(max(0.0, 1.0 - rr)));
-    float mottle = fbm3(n * 3.5 + m.w * 50.0);
-    float craters = smoothstep(0.55, 0.7, fbm3(n * 9.0 + m.w * 20.0));
+  // A small moon: a crater-mottled sphere lit by the same sun, usually a crescent, since the sun is
+  // behind the planet; its dark side lit a little by the planet. t: how far along the ray it is.
+  vec4 moon(vec3 o, vec3 d, vec4 m, vec3 tint, float seed, float fw, vec3 sun, out float t) {
+    t = -1.0;
+    if (m.w <= 0.0) return vec4(0.0);
+    vec2 hit = sphereHit(o, d, m);
+    float edge = (1.0 - smoothstep(1.0 - 1.5 * fw, 1.0 + 0.5 * fw, hit.y)) * step(dot(o - m.xyz, d), 0.0);
+    if (edge <= 0.0) return vec4(0.0);
+    t = hit.x > 0.0 ? hit.x : dot(m.xyz - o, d);
+    vec3 n = sphereNormal(o, d, m, hit.x);
+    float mottle = fbm3(n * 3.5 + seed * 50.0);
+    float craters = smoothstep(0.55, 0.7, fbm3(n * 9.0 + seed * 20.0));
     vec3 albedo = tint * (0.65 + 0.6 * mottle) * (1.0 - 0.35 * craters);
     float light = max(dot(n, sun), 0.0);
-    // The dark side is lit by the planet below and the nebula, and the backlit edge catches the sun.
-    vec3 lit = albedo * uSunColor * light * 1.3 + albedo * (uAir * 0.25 * max(-d.y, 0.0) + 0.09);
-    vec2 toSun = length(sun.xy) > 1e-4 ? normalize(sun.xy) : vec2(0.0, 1.0);
-    vec2 outward = length(d) > 1e-4 ? d / length(d) : vec2(0.0, 1.0);
-    lit += uSunColor * pow(1.0 - n.z, 4.0) * max(dot(outward, toSun), 0.0) * 0.5;
-    return mix(col, lit, disc);
+    vec3 toPlanet = normalize(uPlanet.xyz - m.xyz);
+    vec3 lit = albedo * uSunColor * light * 1.3 + albedo * (uAir * 0.25 * max(dot(n, toPlanet), 0.0) + 0.09);
+    // The backlit edge catches the sun.
+    vec3 sunAcross = sun - d * dot(sun, d);
+    vec3 towardSun = sunAcross * inversesqrt(max(dot(sunAcross, sunAcross), 1e-12));
+    lit += uSunColor * pow(1.0 - max(dot(n, -d), 0.0), 4.0) * max(dot(n, towardSun), 0.0) * 0.5;
+    return vec4(lit, edge);
   }
 
   // City lights: one in some cells of a lattice through the surface, clustered where the land is
@@ -331,96 +427,86 @@ const SKY_FRAGMENT = /* glsl */ `
     return exp(-dot(along, along) / 0.02) * (0.45 + 0.55 * hash31(id + 2.2)) * (1.0 - smoothstep(0.12, 0.3, footprint));
   }
 
-  // Pinpoints in hashed cells, one layer per call; a few bright ones carry the four-pointed spikes
-  // of the mark. Offsets stay in the middle of a cell so a spike never crosses its edge.
-  vec3 starLayer(vec2 css, float cell, float seed, float spikes) {
-    vec2 g = css / cell + seed * 17.0;
-    vec2 id = floor(g);
-    vec2 f = fract(g) - 0.5;
-    float h = hash21(id + seed);
-    if (h > 0.34) return vec3(0.0);
-    vec2 offset = (vec2(hash21(id + 3.1), hash21(id + 7.7)) - 0.5) * 0.45;
-    vec2 d = (f - offset) * cell;
-    // At least a pixel wide, or a star crossing pixel centres as the sky streams by twinkles.
-    float size = 0.85 + 0.7 * hash21(id + 11.3);
-    float twinkle = 0.6 + 0.4 * sin(uTime * (0.6 + 1.9 * h) + h * 60.0);
-    float core = exp(-dot(d, d) / (size * size));
-    vec3 tint = mix(vec3(0.75, 0.92, 1.0), vec3(1.0, 0.93, 0.82), hash21(id + 5.5));
-    // At the heat death each star goes out at its own moment, flaring as it goes, the last red.
-    float death = hash21(id + 23.7);
-    float alive = smoothstep(uDying - 0.004, uDying + 0.004, death);
-    float going = uDying > 0.0 ? exp(-pow(abs(death - uDying) * 160.0, 2.0)) : 0.0;
-    tint = mix(tint, vec3(1.0, 0.42, 0.28), smoothstep(0.35, 0.9, uDying));
-    float bright = step(0.3, h) * spikes;
-    float spike = bright * (exp(-abs(d.y) * 1.6) * exp(-abs(d.x) * 0.16) + exp(-abs(d.x) * 1.6) * exp(-abs(d.y) * 0.16));
-    return tint * (core * (0.9 + 2.5 * bright) + spike * 0.55) * twinkle * alive + tint * core * going * 4.0;
-  }
-
-  // All three layers of stars, streaming past at their own speeds.
-  vec3 starField(vec2 css) {
-    return starLayer(css + uDrift * 8.0 + uScroll, 61.0, 1.0, 0.0)
-         + starLayer(css + uDrift * 16.0 + uScroll * 1.9, 97.0, 2.0, 0.0) * 0.8
-         + starLayer(css + uDrift * 30.0 + uScroll * 3.4, 173.0, 3.0, 1.0);
-  }
-
-  ${VISTA_GLSL}
-
   void main() {
-    vec2 px = gl_FragCoord.xy;
-    vec2 css = px / uRatio;
-    vec3 col = texture2D(tNebula, vUv).rgb;
-
-    // The planet, drifting a few pixels against the pointer.
-    vec2 centre = uPlanet.xy - uDrift * 26.0 * uRatio;
-    float radius = uPlanet.z;
-    vec2 q = (px - centre) / radius;
-    float r = length(q);
+    // This pixel's ray: in the camera's frame, then turned into the sky's.
+    vec2 ndc = gl_FragCoord.xy / uSkySize * 2.0 - 1.0;
+    vec4 farPoint = uInvViewProj * vec4(ndc, 1.0, 1.0);
+    vec3 ray = normalize(farPoint.xyz / farPoint.w - uCamPos);
+    vec3 o = uSkyEye;
+    vec3 d = normalize(uSkyFromCamera * ray);
+    // How far along the ray the nearest solid thing is, in the ships' units, for the depth.
+    float nearest = 1e9;
+    vec3 col = textureCube(tNebula, d).rgb;
     vec3 sun = uSunDir;
-    vec2 sunFlat = length(sun.xy) > 1e-4 ? normalize(sun.xy) : vec2(0.0, 1.0);
-    float airHeight = 0.05;
 
-    float onPlanet = 1.0 - smoothstep(1.0 - 1.5 / radius, 1.0 + 0.5 / radius, r);
-
-    // How far the planet's surface moves across a pixel, taken here, before any branch: screen
-    // derivatives inside one are undefined where a 2x2 quad of pixels straddles the limb.
-    vec3 surfaceHere = uBody * vec3(q, sqrt(max(0.0, 1.0 - r * r)));
+    #if VISTA == 0 || VISTA == 7 || VISTA == 8
+    // The planet, met along the ray in its own units.
+    vec3 po = (o - uPlanet.xyz) / uPlanet.w;
+    float pb = dot(po, d);
+    float planetAhead = step(pb, 0.0);
+    float impact = sqrt(max(dot(po, po) - pb * pb, 0.0));
+    float pd = pb * pb - dot(po, po) + 1.0;
+    float ground = pd > 0.0 && pb < 0.0 ? -pb - sqrt(pd) : -1.0;
+    vec3 closest = po - d * pb;
+    vec3 limbDir = closest * inversesqrt(max(dot(closest, closest), 1e-12));
+    // The surface point met, or for a ray just past the limb the limb's nearest point, so the pixels
+    // the edge antialiases over are shaded as the rim.
+    vec3 n = ground > 0.0 ? po + d * ground : limbDir;
+    // How far the surface moves across a pixel and how far the ray's closest approach does, taken
+    // here, before any branch: screen derivatives inside one are undefined where a 2x2 quad of
+    // pixels straddles the limb.
+    float fwImpact = max(fwidth(impact), 1e-6);
+    vec3 surfaceHere = uBody * n;
     float footprint = length(fwidth(surfaceHere));
+    float onPlanet = (1.0 - smoothstep(1.0 - 1.5 * fwImpact, 1.0 + 0.5 * fwImpact, impact)) * planetAhead;
+    vec2 moonImpact = vec2(sphereHit(o, d, uMoonA).y, sphereHit(o, d, uMoonB).y);
+    vec2 fwMoon = max(fwidth(moonImpact), vec2(1e-6));
+    float airHeight = 0.05;
+    vec3 sunAcross = sun - d * dot(sun, d);
+    vec3 towardSun = sunAcross * inversesqrt(max(dot(sunAcross, sunAcross), 1e-12));
+    #else
+    float onPlanet = 0.0;
+    #endif
 
-    // Stars, hidden behind the planet. The camera is in orbit, so they stream past, the nearer
-    // layers faster than the far ones.
+    // Stars, hidden behind the planet.
     vec3 stars;
     if (uHyper.x > 0.001) {
-      // Into hyperspace: each star drawn again at points pulled toward the vanishing point, so it
+      // Into hyperspace: each star drawn again at directions pulled toward the vanishing point, so it
       // stretches out from there into a streak.
       stars = vec3(0.0);
-      vec2 centre = uHyperAt / uRatio;
       for (int i = 0; i < 12; i++) {
         float f = float(i) / 11.0;
-        stars += starField(mix(css, centre, f * uHyper.x * 0.9)) * (1.2 - f * 0.6);
+        stars += starsAt(normalize(mix(d, uHyperDir, f * uHyper.x * 0.9))) * (1.2 - f * 0.6);
       }
       stars *= 0.2 + 0.25 * uHyper.x;
     } else {
-      stars = starField(css);
+      stars = starsAt(d);
     }
     col += stars * (1.0 - onPlanet * uHyper.y);
     vec3 sky = col;
-    vec3 moonsOver = moon(col, px + uDrift * 12.0 * uRatio, uMoonA, uMoonColorA, sun);
-    moonsOver = moon(moonsOver, px + uDrift * 12.0 * uRatio, uMoonB, uMoonColorB, sun);
-    col = mix(moonsOver, col, onPlanet);
 
     #if VISTA == 0 || VISTA == 7 || VISTA == 8
-    if (r < 1.0 + airHeight * 5.0) {
-      vec2 limbDir = r > 1e-4 ? q / r : vec2(0.0, 1.0);
+    // The moons: behind the planet first, over it after if they are nearer.
+    float groundAt = ground > 0.0 && onPlanet > 0.5 ? ground * uPlanet.w : 1e9;
+    float moonAtA;
+    float moonAtB;
+    vec4 moonA = moon(o, d, uMoonA, uMoonColorA, uMoonSeeds.x, fwMoon.x, sun, moonAtA);
+    vec4 moonB = moon(o, d, uMoonB, uMoonColorB, uMoonSeeds.y, fwMoon.y, sun, moonAtB);
+    bool moonAFront = moonAtA > 0.0 && moonAtA < groundAt;
+    bool moonBFront = moonAtB > 0.0 && moonAtB < groundAt;
+    if (!moonAFront) col = mix(col, moonA.rgb, moonA.a);
+    if (!moonBFront) col = mix(col, moonB.rgb, moonB.a);
+
+    if (impact < 1.0 + airHeight * 5.0 && planetAhead > 0.5) {
       // How lit the air over this point of the limb is: past the terminator a little, since the
       // atmosphere stands above the ground.
-      float airLit = smoothstep(-0.45, 0.35, dot(vec3(limbDir, 0.0), sun));
-      // Forward scattering towards a sun behind the planet: brightest along the arc nearest it.
-      float toward = max(dot(limbDir, sunFlat), 0.0);
-      float mie = pow(toward, 48.0) * max(-sun.z, 0.0) * 2.2 + pow(toward, 6.0) * 0.18;
+      float airLit = smoothstep(-0.45, 0.35, dot(limbDir, sun));
+      // Forward scattering toward a sun behind the planet: brightest along the arc nearest it.
+      float toward = max(dot(limbDir, towardSun), 0.0);
+      float mie = pow(toward, 48.0) * max(dot(d, sun), 0.0) * 2.2 + pow(toward, 6.0) * 0.18;
 
-      if (r < 1.0) {
-        float z = sqrt(max(0.0, 1.0 - r * r));
-        vec3 n = vec3(q, z);
+      if (onPlanet > 0.0) {
+        float z = max(dot(n, -d), 0.0);
         vec3 t = uBody * n;
         vec3 tc = uCloudBody * n;
         vec3 ts = t + uSeed;
@@ -432,8 +518,8 @@ const SKY_FRAGMENT = /* glsl */ `
         float coast = footprint * 2.1 * scale * 0.6;
         float land = smoothstep(uWorldA.x - coast, uWorldA.x + 0.05 + coast, elevation);
         float high = smoothstep(uWorldA.x + 0.08, uWorldA.x + 0.26, elevation) * land;
-        vec3 ground = mix(uLand, uHighland, high) * (0.8 + 0.4 * fbm3Filtered(ts * 9.0 * scale, footprint * 9.0 * scale));
-        vec3 albedo = mix(uLowland * (0.85 + 0.3 * fbm3Filtered(ts * 4.0 + 2.0, footprint * 4.0)), ground, land);
+        vec3 groundColour = mix(uLand, uHighland, high) * (0.8 + 0.4 * fbm3Filtered(ts * 9.0 * scale, footprint * 9.0 * scale));
+        vec3 albedo = mix(uLowland * (0.85 + 0.3 * fbm3Filtered(ts * 4.0 + 2.0, footprint * 4.0)), groundColour, land);
         // [r3:howard] A face, painted on the body where the framing shows it, projected straight
         // on from its centre. Its relief tips the normal, so the terminator throws the brow's,
         // the nose's and the cheekbones' shadows; its eyes shift a little toward the pointer.
@@ -457,7 +543,7 @@ const SKY_FRAGMENT = /* glsl */ `
           float faceHy = textureLod(tFaceRelief, faceUv + vec2(0.0, faceStep), faceReliefLod).r - textureLod(tFaceRelief, faceUv - vec2(0.0, faceStep), faceReliefLod).r;
           vec3 faceTipped = t - (uFaceRight * faceHx + uFaceUp * faceHy) * (2.4 * faceMask / max(uFace.y, 0.05));
           faceTipped *= inversesqrt(max(dot(faceTipped, faceTipped), 1e-6));
-          // Back to view space: the body's rotation, transposed.
+          // Back to the sky's frame: the body's rotation, transposed.
           faceNormal = faceTipped * uBody;
         }
         float cloud = fbm3Filtered(tcs * vec3(3.2, 7.5, 3.2) + vec3(uTime * 0.006, 0.0, 0.0), footprint * 7.5);
@@ -497,9 +583,9 @@ const SKY_FRAGMENT = /* glsl */ `
         vec3 lit = albedo * max(ndl, 0.0) * sunlight * 1.35;
 
         // The sun's glint on open water, strongest where the lit crescent meets the limb.
-        vec3 h = sun + vec3(0.0, 0.0, 1.0);
+        vec3 h = sun - d;
         float hl = length(h);
-        h = hl > 1e-4 ? h / hl : vec3(0.0, 0.0, 1.0);
+        h = hl > 1e-4 ? h / hl : -d;
         float water = (1.0 - land) * (1.0 - cloud) * (1.0 - uWorldB.z);
         // Only on real water: a dry world's basins, an undercity or a lava plain would sparkle as
         // their edges roll through the highlight.
@@ -537,86 +623,113 @@ const SKY_FRAGMENT = /* glsl */ `
           solid = station.a;
         #endif
         col = mix(col, surface, onPlanet * solid);
+        if (ground > 0.0 && onPlanet * solid > 0.5) nearest = min(nearest, ground * uPlanet.w);
       }
 
       // The air over it all, the ground and the stars behind the limb alike. Then the site's cyan
       // line on the edge.
       vec3 gathered;
       vec3 through;
-      scatter(q, r, sun, gathered, through);
+      scatter(po, d, ground, sun, gathered, through);
       col = col * through + gathered;
-      float line = exp(-abs(r - 1.0) * radius / (1.1 * uRatio)) * (abs(uVista - 8.0) < 0.5 ? 0.0 : 1.0);
+      float line = exp(-abs(impact - 1.0) / (1.1 * uRatio * fwImpact)) * (abs(uVista - 8.0) < 0.5 ? 0.0 : 1.0);
       col += uAccent * line * (0.2 + 0.9 * airLit + 0.6 * mie);
 
-      // Aurora over a cold world's night side: curtains along the limb, green at their feet and
-      // violet above, drifting.
+      // Aurora over a cold world's night side: curtains along the limb, fixed to the world as it
+      // turns, green at their feet and violet above, drifting.
       if (uWorldC.y > 0.0) {
-        float around = atan(limbDir.x, limbDir.y);
+        vec3 limbBody = uBody * limbDir;
+        float around = atan(limbBody.x, limbBody.z);
         float curtain = 0.5 + 0.5 * sin(around * 26.0 + fbm2(vec2(around * 5.0 + uSeed.x, uTime * 0.12)) * 9.0 + uTime * 0.35);
         curtain *= curtain * curtain;
-        float h = (r - 1.0) / airHeight;
-        float profile = smoothstep(-0.4, 0.3, h) * exp(-max(h - 0.3, 0.0) * 1.6);
-        vec3 glow = mix(vec3(0.15, 1.0, 0.5), vec3(0.6, 0.3, 1.0), smoothstep(0.4, 2.2, h));
-        float away = 1.0 - smoothstep(-0.35, 0.1, limbDir.x - sunFlat.x);
+        float hh = (impact - 1.0) / airHeight;
+        float profile = smoothstep(-0.4, 0.3, hh) * exp(-max(hh - 0.3, 0.0) * 1.6);
+        vec3 glow = mix(vec3(0.15, 1.0, 0.5), vec3(0.6, 0.3, 1.0), smoothstep(0.4, 2.2, hh));
+        float away = 1.0 - smoothstep(-0.35, 0.1, dot(limbDir, towardSun));
         col += glow * curtain * profile * away * uWorldC.y * 0.4;
       }
     }
 
-    // Rings: the plane through the planet's centre square to uRingNormal, met along the view.
-    // They hide behind the planet's disc, cross in front of it on the near side, and fall into
+    // Rings: the plane through the planet's centre square to uRingNormal, met along the ray. They
+    // hide behind the planet where it is nearer, cross in front of it where they are, and fall into
     // its shadow where the sun is behind it.
-    if (uWorldC.z > 0.5 && abs(uRingNormal.z) > 0.05) {
-      float rz = -(q.x * uRingNormal.x + q.y * uRingNormal.y) / uRingNormal.z;
-      vec3 rp = vec3(q, rz);
-      float rr = length(rp);
-      if (rr > 1.1 && rr < 1.48) {
-        float u = (rr - 1.1) / 0.38;
-        float ringlets = smoothstep(0.35, 0.75, 0.5 + 0.5 * sin(u * 19.0 + uRingSeed) * sin(u * 7.0 + uRingSeed * 2.0));
-        float grain = (0.35 + 0.65 * ringlets) * (0.85 + 0.15 * sin(rr * 300.0 + uRingSeed * 3.0));
-        float gap = smoothstep(0.015, 0.03, abs(u - (0.55 + 0.1 * fract(uRingSeed))));
-        float density = smoothstep(0.0, 0.05, u) * (1.0 - smoothstep(0.88, 1.0, u)) * gap * grain;
-        float hidden = r < 1.0 && rz < 0.0 ? 1.0 : 0.0;
-        float toward = dot(rp, sun);
-        float shadow = toward < 0.0 ? 1.0 - smoothstep(0.96, 1.04, length(rp - sun * toward)) : 0.0;
-        vec3 ringLight = uRingColor * uSunColor * (0.2 + 0.8 * (1.0 - shadow)) * (0.55 + 0.6 * pow(max(-sun.z, 0.0), 2.0));
-        col = mix(col, ringLight, density * 0.42 * (1.0 - hidden));
+    if (uWorldC.z > 0.5) {
+      float facing = dot(d, uRingNormal);
+      float across = abs(facing) > 1e-4 ? -dot(po, uRingNormal) / facing : -1.0;
+      if (across > 0.0) {
+        vec3 rp = po + d * across;
+        float rr = length(rp);
+        if (rr > 1.1 && rr < 1.48) {
+          float u = (rr - 1.1) / 0.38;
+          float ringlets = smoothstep(0.35, 0.75, 0.5 + 0.5 * sin(u * 19.0 + uRingSeed) * sin(u * 7.0 + uRingSeed * 2.0));
+          float grain = (0.35 + 0.65 * ringlets) * (0.85 + 0.15 * sin(rr * 300.0 + uRingSeed * 3.0));
+          float gap = smoothstep(0.015, 0.03, abs(u - (0.55 + 0.1 * fract(uRingSeed))));
+          float density = smoothstep(0.0, 0.05, u) * (1.0 - smoothstep(0.88, 1.0, u)) * gap * grain;
+          float hidden = ground > 0.0 && ground < across ? 1.0 : 0.0;
+          float toward = dot(rp, sun);
+          float shadow = toward < 0.0 ? 1.0 - smoothstep(0.96, 1.04, length(rp - sun * toward)) : 0.0;
+          vec3 ringLight = uRingColor * uSunColor * (0.2 + 0.8 * (1.0 - shadow)) * (0.55 + 0.6 * pow(max(dot(d, sun), 0.0), 2.0));
+          float cover = density * 0.42 * (1.0 - hidden);
+          col = mix(col, ringLight, cover);
+          if (cover > 0.18) nearest = min(nearest, across * uPlanet.w);
+        }
       }
     }
-
+    // The moons that are nearer than the planet, over it.
+    if (moonAFront) col = mix(col, moonA.rgb, moonA.a);
+    if (moonBFront) col = mix(col, moonB.rgb, moonB.a);
+    if (moonA.a > 0.5 && moonAtA > 0.0) nearest = min(nearest, moonAtA);
+    if (moonB.a > 0.5 && moonAtB > 0.0) nearest = min(nearest, moonAtB);
     #endif
 
     // The other backdrops, each compiled only into its own variant of this shader.
     #if VISTA == 9
-      col = heatDeath(px, col);
+      float fwHole = max(fwidth(sphereHit(o, d, uBodyA).y), 1e-6);
+      col = heatDeath(o, d, col, fwHole, nearest);
     #elif VISTA == 1
-      col = solarSystem(px, col);
+      float fwStar = max(fwidth(sphereHit(o, d, uBodyA).y), 1e-6);
+      col = solarSystem(o, d, col, fwStar, nearest);
     #elif VISTA == 2
-      col = binary(px, col);
+      float fwGiant = max(fwidth(sphereHit(o, d, uBodyA).y), 1e-6);
+      float fwCompanion = max(fwidth(sphereHit(o, d, uBodyB).y), 1e-6);
+      col = binary(o, d, col, fwGiant, fwCompanion, nearest);
     #elif VISTA == 3
-      col += starHalo(px, uBodyA, uColourA, uVistaParams.x);
-      vec4 face = starFace(px, uBodyA, uColourA, uVistaParams.x);
+      float fwStar = max(fwidth(sphereHit(o, d, uBodyA).y), 1e-6);
+      col += starHalo(o, d, uBodyA, uColourA, uVistaParams.x, uBodyPx.w, uBodyPx.x);
+      float starAt;
+      vec4 face = starFace(o, d, uBodyA, uColourA, uVistaParams.x, uBodyPx.w, fwStar, starAt);
       col = mix(col, face.rgb, face.a);
+      if (face.a > 0.5 && starAt > 0.0) nearest = min(nearest, starAt);
     #elif VISTA == 4
-      col = dwarf(px, col);
+      float fwDwarf = max(fwidth(sphereHit(o, d, uBodyA).y), 1e-6);
+      col = dwarf(o, d, col, fwDwarf, nearest);
     #elif VISTA == 5 || VISTA == 6
       bool lensed;
-      vec3 bent = blackHole(px, col, lensed);
+      vec3 bent = blackHole(o, d, col, nearest, lensed);
       if (lensed) col = bent;
       #if VISTA == 6
-        col += jets(px);
+        col += jets(o, d, nearest);
       #endif
     #endif
 
-    // In hyperspace the planet is left behind, and a tunnel of blue light streams past.
+    // In hyperspace the backdrop is left behind, and a tunnel of blue light streams past.
     col = mix(sky, col, uHyper.y);
+    if (uHyper.y < 0.5) nearest = 1e9;
     if (uHyper.z > 0.001) {
-      vec2 d = (px - uHyperAt) / uRatio;
-      float around = atan(d.y, d.x);
+      vec2 dd = (gl_FragCoord.xy - uHyperAt) / uRatio;
+      float around = atan(dd.y, dd.x);
       float streaks = pow(noise2(vec2(around * 38.0, uTime * 0.7)), 5.0) + 0.4 * pow(noise2(vec2(around * 91.0, uTime * 1.3 + 7.0)), 7.0);
-      float outward = smoothstep(20.0, 420.0, length(d));
+      float outward = smoothstep(20.0, 420.0, length(dd));
       col += vec3(0.45, 0.72, 1.0) * streaks * outward * uHyper.z * 1.6 + vec3(0.05, 0.1, 0.2) * uHyper.z * outward;
     }
     gl_FragColor = vec4(col, 1.0);
+    // The depth the camera would give the nearest solid thing, so the ships test against it.
+    float depth = 1.0;
+    if (nearest < 1e8) {
+      vec4 clip = uViewProj * vec4(uCamPos + ray * nearest, 1.0);
+      depth = clamp(clip.z / clip.w * 0.5 + 0.5, 0.0, 1.0);
+    }
+    gl_FragDepth = depth;
   }
 `;
 
@@ -950,7 +1063,9 @@ function start(hero, art) {
   const targetType = floatTargets ? THREE.HalfFloatType : THREE.UnsignedByteType;
   const makeTarget = () => new THREE.WebGLRenderTarget(1, 1, { type: targetType, depthBuffer: false });
   const sceneTarget = new THREE.WebGLRenderTarget(1, 1, { type: targetType, samples: 4 });
-  const nebulaTarget = makeTarget();
+  // [r3:orbit] The nebulae, on a cube round the viewer (NEBULA_FRAGMENT): smaller on a small screen.
+  const nebulaSize = Math.min(window.innerWidth, window.innerHeight) < 600 ? 256 : 512;
+  const nebulaCube = new THREE.WebGLCubeRenderTarget(nebulaSize, { type: targetType, depthBuffer: false, generateMipmaps: false, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter });
   const bloomTargets = [makeTarget(), makeTarget(), makeTarget(), makeTarget()];
 
   // Palette, from the site's tokens.
@@ -1000,42 +1115,48 @@ function start(hero, art) {
   const postCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
   const postQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2));
   post.add(postQuad);
-  function pass(material, target) {
+  function pass(material, target, face = 0) {
     postQuad.material = material;
-    renderer.setRenderTarget(target);
+    renderer.setRenderTarget(target, face);
     renderer.render(post, postCamera);
   }
 
   const time = { value: reduceMotion ? 24 : 0 };
   const drift = { value: new THREE.Vector2() };
-  const scroll = { value: new THREE.Vector2() };
-  const sunDir = { value: new THREE.Vector3(0.3, 0.6, -0.7).normalize() };
+  const sunDir = { value: new THREE.Vector3(0.3, 0.6, -0.7).normalize() }; // [r3:orbit] toward the sun, in the camera's frame
   const nebulaMaterial = fullscreenMaterial(NEBULA_FRAGMENT, {
     uTime: time,
-    uAspect: { value: 1 },
-    uDrift: drift,
-    uScroll: scroll,
-    uHeight: { value: 1 },
+    uFace: { value: 0 },
+    uSize: { value: nebulaSize },
+    uHalfSpan: { value: 0.25 },
     uTop: { value: top },
     uBottom: { value: bottom },
     uCyan: { value: accent },
     uViolet: { value: new THREE.Color() },
     uThird: { value: new THREE.Color() },
-    uCloudsAt: { value: new THREE.Vector4() },
-    uThirdAt: { value: new THREE.Vector2() },
+    uCyanAt: { value: new THREE.Vector3(0, 0, -1) },
+    uVioletAt: { value: new THREE.Vector3(0, 0, -1) },
+    uThirdAt: { value: new THREE.Vector3(0, 0, -1) },
     uSpread: { value: new THREE.Vector3(1, 1, 1) },
     uStrength: { value: new THREE.Vector3() },
     uNoise: { value: new THREE.Vector4(0, 0, 1, 1) },
     uFade: { value: 0 },
   });
   const skyUniforms = {
-    tNebula: { value: nebulaTarget.texture },
+    tNebula: { value: nebulaCube.texture },
     uTime: time,
     uRatio: { value: 1 },
-    uDrift: drift,
-    uScroll: scroll,
-    uPlanet: { value: new THREE.Vector3(0, 0, 100) },
-    uSunDir: { value: new THREE.Vector3(0, 0, -1) }, // [r3:navigator] view space: the orbit turns it
+    uSkySize: { value: new THREE.Vector2(1, 1) },
+    // [r3:orbit] The camera, the orbit and the backdrop's focus: every pixel's ray is built from these.
+    uCamPos: { value: new THREE.Vector3(0, 0, 10) },
+    uInvViewProj: { value: new THREE.Matrix4() },
+    uViewProj: { value: new THREE.Matrix4() },
+    uSkyFromCamera: { value: new THREE.Matrix3() },
+    uSkyEye: { value: new THREE.Vector3() },
+    uPixelTan: { value: 0.001 },
+    uHyperDir: { value: new THREE.Vector3(0, 0, -1) },
+    uPlanet: { value: new THREE.Vector4(0, 0, 0, 1) },
+    uSunDir: { value: new THREE.Vector3(0, 0, -1) }, // [r3:orbit] in the sky's frame
     uSunColor: { value: sunColor },
     uBody: { value: new THREE.Matrix3() },
     uCloudBody: { value: new THREE.Matrix3() },
@@ -1064,32 +1185,46 @@ function start(hero, art) {
     uHyper: { value: new THREE.Vector3(0, 1, 0) },
     uVista: { value: 0 },
     uDying: { value: 0 },
-    uBodyA: { value: new THREE.Vector4() },
-    uBodyB: { value: new THREE.Vector4() },
+    uBodyA: { value: new THREE.Vector4(0, 0, 0, 1) },
+    uBodyB: { value: new THREE.Vector4(0, 0, 0, 1) },
+    uBodyPx: { value: new THREE.Vector4(1, 1, 1, 0) },
     uVistaParams: { value: new THREE.Vector4() },
     uColourA: { value: new THREE.Vector3(1, 1, 1) },
     uColourB: { value: new THREE.Vector3(1, 1, 1) },
-    uWorlds: { value: Array.from({ length: 8 }, () => new THREE.Vector4()) },
+    uWorlds: { value: Array.from({ length: 8 }, () => new THREE.Vector4(0, 0, 0, 1)) },
     uWorldTint: { value: Array.from({ length: 8 }, () => new THREE.Color()) },
     uWorldTintB: { value: Array.from({ length: 8 }, () => new THREE.Color()) },
-    uOrbits: { value: Array.from({ length: 8 }, () => new THREE.Vector4(1, 1, 0, 0)) },
+    uOrbitRadii: { value: new Float32Array(8) },
+    uOrbitU: { value: new THREE.Vector3(1, 0, 0) },
+    uOrbitV: { value: new THREE.Vector3(0, 0, 1) },
+    uOrbitN: { value: new THREE.Vector3(0, 1, 0) },
     uWorldCount: { value: 0 },
-    uSkySize: { value: new THREE.Vector2(1, 1) },
+    uBangAge: { value: 0 },
     uHyperAt: { value: new THREE.Vector2() },
+    // Small moons, in the sky's frame; and where they show on the stage, device pixels, for the
+    // weather (r3-environment.js), which the shader does not read.
     uMoonA: { value: new THREE.Vector4(0, 0, 0, 0) },
     uMoonB: { value: new THREE.Vector4(0, 0, 0, 0) },
+    uMoonPxA: { value: new THREE.Vector4(0, 0, 0, 0) },
+    uMoonPxB: { value: new THREE.Vector4(0, 0, 0, 0) },
+    uMoonSeeds: { value: new THREE.Vector2() },
     uMoonColorA: { value: new THREE.Color() },
     uMoonColorB: { value: new THREE.Color() },
     uBetaR: { value: new THREE.Vector3() },
     uBetaM: { value: 1 },
     uAirShape: { value: new THREE.Vector3(0.011, 0.0035, 1.06) },
   };
-  const ringNormal = skyUniforms.uRingNormal.value.clone();
   const skyMaterial = fullscreenMaterial(SKY_FRAGMENT, skyUniforms);
   // Compiled once per backdrop, with only that backdrop's code (see VISTA_GLSL).
   skyMaterial.defines = { VISTA: vista.index };
+  // [r3:orbit] The sky writes the depth of whatever solid its rays meet, always, and the ships test
+  // against it.
+  skyMaterial.depthTest = true;
+  skyMaterial.depthWrite = true;
+  skyMaterial.depthFunc = THREE.AlwaysDepth;
 
-  const camera = new THREE.PerspectiveCamera(28, 1, 0.1, 60);
+  // [r3:orbit] Far enough for the backdrop's bodies, whose depth the sky writes.
+  const camera = new THREE.PerspectiveCamera(28, 1, 0.1, 400);
   camera.position.set(0, 0, 10);
   const scene = new THREE.Scene();
   const pivot = new THREE.Group();
@@ -1118,6 +1253,7 @@ function start(hero, art) {
   const memory = createMemory();
   memory.record('survey', { world: world.name });
   let fleet = createFleet({ scene, camera, time, sunDir, sunColor, air, reduceMotion, overlay: art || hero, anisotropy: renderer.capabilities.getMaxAnisotropy(), random: world.random, memory });
+  fleet.kit.occluded = occluded; // [r3:orbit]
   // [r3:director] rare encounters, built from the fleet's kit.
   let director = createDirector({ kit: fleet.kit, fleet, memory, random: world.random });
   // [r3:chart] What replays this scene: the world by name and seed, the backdrop by kind and seed,
@@ -1207,6 +1343,26 @@ function start(hero, art) {
   const alignAxis = new THREE.Matrix4();
   const spinMatrix = new THREE.Matrix4();
   const planet = { x: 0, y: 0, radius: 1 };
+  // [r3:orbit] The camera at home, straight down the stage, for standing the layout's discs up as
+  // spheres: the ray through a css pixel, and the tangent a pixel spans.
+  const lens = {
+    home: new THREE.Vector3(0, 0, 10),
+    width: 1,
+    height: 1,
+    ratio: 1,
+    pxTan: 1,
+    ray(x, y, out) {
+      return out.set((x - this.width / 2) * this.pxTan, (this.height / 2 - y) * this.pxTan, -1).normalize();
+    },
+  };
+  // The backdrop's focus in the camera's frame, what the orbit turns about: the planet's centre, or
+  // the one liftVista() finds. The planet's size and distance, in the ships' units.
+  const focus = new THREE.Vector3(0, 0, -110);
+  const focusNow = new THREE.Vector3();
+  const sphere = { radius: 1, distance: 1 };
+  const lift = createLift();
+  const rayA = new THREE.Vector3();
+  const rayB = new THREE.Vector3();
   let sunAngle = 0;
   let freeRegion = [0, 0, 1, 1];
   const tints = new Map();
@@ -1216,6 +1372,21 @@ function start(hero, art) {
   };
   const anchor = new THREE.Vector3();
   let jewelScale = 1;
+
+  // [r3:orbit] This visit's nebulae on the sky's sphere: each cloud where r3-worlds.js put it on the
+  // home view, its spread and the noise's grain measured in the view's height.
+  function placeNebula() {
+    const nebula = nebulaMaterial.uniforms;
+    const span = height * lens.pxTan;
+    const sky = world.sky;
+    lens.ray(sky.cyan[0] * width, (1 - sky.cyan[1]) * height, nebula.uCyanAt.value);
+    lens.ray(sky.violet[0] * width, (1 - sky.violet[1]) * height, nebula.uVioletAt.value);
+    lens.ray(sky.third[0] * width, (1 - sky.third[1]) * height, nebula.uThirdAt.value);
+    nebula.uSpread.value.set(...sky.spread).multiplyScalar(span);
+    nebula.uNoise.value.set(...sky.offset, sky.scale / span, sky.warp);
+    nebula.uHalfSpan.value = span / 2;
+    nebulaAge = Infinity;
+  }
 
   function layout() {
     const bounds = stage.getBoundingClientRect();
@@ -1227,15 +1398,18 @@ function start(hero, art) {
     const w = Math.round(width * ratio);
     const h = Math.round(height * ratio);
     sceneTarget.setSize(w, h);
-    nebulaTarget.setSize(Math.max(1, w >> 1), Math.max(1, h >> 1));
     bloomTargets[0].setSize(Math.max(1, w >> 2), Math.max(1, h >> 2));
     bloomTargets[1].setSize(Math.max(1, w >> 2), Math.max(1, h >> 2));
     bloomTargets[2].setSize(Math.max(1, w >> 3), Math.max(1, h >> 3));
     bloomTargets[3].setSize(Math.max(1, w >> 3), Math.max(1, h >> 3));
     camera.aspect = width / height;
     camera.updateProjectionMatrix();
-    nebulaMaterial.uniforms.uAspect.value = width / height;
-    nebulaMaterial.uniforms.uHeight.value = height;
+    lens.width = width;
+    lens.height = height;
+    lens.ratio = ratio;
+    lens.pxTan = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) / (height / 2);
+    skyUniforms.uPixelTan.value = lens.pxTan;
+    placeNebula();
     skyUniforms.uRatio.value = ratio;
     compositeUniforms.uRatio.value = ratio;
     compositeUniforms.uResolution.value.set(w, h);
@@ -1293,7 +1467,18 @@ function start(hero, art) {
       planet.radius = 1;
     }
     skyUniforms.uSkySize.value.set(width * ratio, height * ratio);
-    skyUniforms.uPlanet.value.set(planet.x * ratio, planet.y * ratio, planet.radius * ratio);
+    // [r3:orbit] The planet stood up as a sphere seen from home: its crown where the layout put it,
+    // its near side no nearer than the ships fly (25 units) and its limb beyond most of them.
+    if (planetLike()) {
+      const centre = lens.ray(planet.x, height - planet.y, rayA);
+      const crown = lens.ray(planet.x, height - planet.y - planet.radius, rayB);
+      const angle = Math.acos(THREE.MathUtils.clamp(centre.dot(crown), -1, 1));
+      const sin = Math.sin(angle);
+      sphere.distance = Math.max(25 / Math.max(1 - sin, 0.05), 40 / Math.max(Math.cos(angle), 0.05));
+      sphere.radius = sphere.distance * sin;
+      focus.copy(lens.home).addScaledVector(centre, sphere.distance);
+    }
+    skyUniforms.uPlanet.value.set(0, 0, 0, sphere.radius);
     // The sun rises at a point round the limb picked for this visit (r3-worlds.js): anywhere the
     // limb is in view, clear of the stage's edges.
     const candidates = [];
@@ -1305,20 +1490,30 @@ function start(hero, art) {
       candidates.push(angle);
     }
     sunAngle = candidates.length ? candidates[Math.floor(world.sunAt * candidates.length) % candidates.length] : 0;
-    // Small moons in the free sky above the planet.
+    // Small moons in the free sky above the planet: [r3:orbit] each a little beyond the planet, behind
+    // its rings as the page has always drawn them, so turning the view swings them round behind it.
     const skyLeft = narrow ? width * 0.55 : Math.max(textRight + 60, width * 0.5);
     [skyUniforms.uMoonA.value, skyUniforms.uMoonB.value].forEach((moonValue, i) => {
       const [a, b, c] = world.moonSeeds.slice(i * 3, i * 3 + 3);
+      const shown = i ? skyUniforms.uMoonPxB.value : skyUniforms.uMoonPxA.value;
       if (i >= Math.min(2, world.moonCount) || vista.kind !== 'planet') {
         moonValue.set(0, 0, 0, 0);
+        shown.set(0, 0, 0, 0);
         return;
       }
       const moonRadius = (5 + a * 17) * (narrow ? 0.6 : 1);
       const x = skyLeft + b * Math.max(0, width - 30 - skyLeft);
       const crown = height - (planet.y + planet.radius);
       const y = THREE.MathUtils.clamp(height * (0.08 + c * 0.4), moonRadius + 8, Math.max(moonRadius + 8, crown - moonRadius - 20));
-      moonValue.set(x * ratio, (height - y) * ratio, moonRadius * ratio, a);
+      const toward = lens.ray(x, y, rayA);
+      const edge = lens.ray(x, y - moonRadius, rayB);
+      const distance = sphere.distance * (1.5 + 0.7 * ((a * 7.31 + c * 3.7) % 1));
+      const radius = distance * Math.sin(Math.acos(THREE.MathUtils.clamp(toward.dot(edge), -1, 1)));
+      rayB.copy(lens.home).addScaledVector(toward, distance).sub(focus);
+      moonValue.set(rayB.x, rayB.y, rayB.z, radius);
+      shown.set(x * ratio, (height - y) * ratio, moonRadius * ratio, a);
     });
+    skyUniforms.uMoonSeeds.value.set(world.moonSeeds[0], world.moonSeeds[3]);
 
     fleet.layout({ width, height, free: textRight, narrow, ratio });
     // Hyperspace opens in the middle of the free sky.
@@ -1378,8 +1573,7 @@ function start(hero, art) {
       event.r3Taken = true;
       return;
     }
-    // A ship under the pointer is shot down, before the star or the planet take the click, and a
-    // world of a solar system is jumped to.
+    // A ship under the pointer is shot down, before the star or the planet take the click.
     if (fleet.shoot(event.clientX - bounds.left, event.clientY - bounds.top)) {
       event.r3Taken = true;
       requestFrame();
@@ -1390,31 +1584,31 @@ function start(hero, art) {
       requestFrame();
       return;
     }
-    if (vista.kind === 'heatDeath' && !vista.bang && !jump.active) {
-      event.r3Taken = true;
-      vista.bang = { x: event.clientX - bounds.left, y: event.clientY - bounds.top, born: time.value };
-      requestFrame();
-      return;
-    }
-    const body = systemWorldAt({ x: event.clientX - bounds.left, y: event.clientY - bounds.top });
-    if (body) {
-      event.r3Taken = true;
-      beginJump(body.world.name);
-      return;
-    }
     // [r3:pilot] A press on the jewel is the pilot's: a click calls the fleet, a drag flies it.
     if (pilot.press(event, { x: event.clientX - bounds.left, y: event.clientY - bounds.top })) event.r3Taken = true;
   }, { passive: true });
+  // [r3:orbit] A click on the sky, not a press, begins it all again at the heat death or jumps to a
+  // world of a solar system, so a drag that starts there turns the view instead (r3-camera.js
+  // swallows the click that ends a drag). A press something else took has no click here.
+  let pressTaken = false;
+  hero.addEventListener('pointerdown', (event) => { pressTaken = !!event.r3Taken; }, { passive: true });
+  hero.addEventListener('click', (event) => {
+    if (pressTaken || event.button !== 0 || event.target.closest(`${interactive}, .r3-survey, .r3-chart`)) return;
+    const point = heroPoint(event);
+    if (overText(point) || overJewel(point)) return;
+    if (vista.kind === 'heatDeath' && !vista.bang && !jump.active) {
+      // Where it was clicked, kept in the sky's frame so it stays there as the view turns.
+      raycaster.setFromCamera(pressNdc.set((point.x / width) * 2 - 1, 1 - (point.y / height) * 2), camera);
+      const at = worldToRig(raycaster.ray.at(120, new THREE.Vector3())).sub(focusNow).applyQuaternion(skyTurn);
+      vista.bang = { x: point.x, y: point.y, born: time.value, at };
+      requestFrame();
+      return;
+    }
+    const body = systemWorldAt(point);
+    if (body) beginJump(body.world.name);
+  });
 
-  // Drag the planet, as the moon on the l3i site drags: the surface follows the pointer and keeps
-  // turning after release, the spin decaying, while the planet's own turn carries on beneath. A
-  // drag along the arc rolls it about its axis; a drag up or down tips it over the limb.
-  const turned = new THREE.Quaternion();
-  const nudge = new THREE.Quaternion();
-  const dragInverse = new THREE.Matrix4();
-  const spinAxisView = worldAxis.clone();
-  const axisX = new THREE.Vector3(1, 0, 0);
-  const planetDrag = { active: false, id: -1, lastX: 0, lastY: 0, vx: 0, vy: 0 };
+  const pressNdc = new THREE.Vector2();
   function heroPoint(event) {
     const bounds = stage.getBoundingClientRect();
     return { x: event.clientX - bounds.left, y: event.clientY - bounds.top };
@@ -1446,84 +1640,166 @@ function start(hero, art) {
     if (jump.active) return null;
     return systemWorlds.find((body) => (body.x - point.x) ** 2 + (body.y - point.y) ** 2 < (body.radius + 8) ** 2) || null;
   }
-  function overPlanet(point) {
-    const dx = point.x - (planet.x - drift.value.x * 26);
-    const dy = point.y - (height - (planet.y - drift.value.y * 26));
-    return dx * dx + dy * dy <= planet.radius * planet.radius;
-  }
-  function turnPlanet(dx, dy) {
-    nudge.setFromAxisAngle(spinAxisView, -dx / planet.radius);
-    turned.premultiply(nudge);
-    nudge.setFromAxisAngle(axisX, dy / planet.radius);
-    turned.premultiply(nudge);
-    turned.normalize();
-  }
   const interactive = 'a, button, input, summary, [role="button"]';
-  hero.addEventListener('pointerdown', (event) => {
-    if (event.r3Taken) return;
-    const point = heroPoint(event);
-    if (!forArt(event, point) || overJewel(point) || !overPlanet(point)) return;
-    planetDrag.active = true;
-    planetDrag.id = event.pointerId;
-    planetDrag.lastX = event.clientX;
-    planetDrag.lastY = event.clientY;
-    planetDrag.vx = 0;
-    planetDrag.vy = 0;
-    hero.setPointerCapture(event.pointerId);
-    hero.style.cursor = 'grabbing';
-    event.preventDefault();
-    requestFrame();
-  });
-  hero.addEventListener('pointermove', (event) => {
-    if (!planetDrag.active) {
-      const point = heroPoint(event);
-      const onLink = event.target.closest(interactive) || event.target.closest('.r3-survey') || overText(point);
-      const body = onLink ? null : systemWorldAt(point);
-      hero.style.cursor = onLink ? '' : fleet.aimed(point.x, point.y) || director.aimed(point.x, point.y) /* [r3:director] */ ? 'crosshair' : body || overJewel(point) ? 'pointer' : overPlanet(point) ? 'grab' : '';
-      waypoint.classList.toggle('is-shown', !!body);
-      if (body) {
-        waypoint.textContent = `${body.world.name} ⟫`;
-        waypoint.style.transform = `translate(${Math.round(body.x + body.radius + 8)}px, ${Math.round(body.y - 8)}px)`;
-      }
-      return;
-    }
-    if (event.pointerId !== planetDrag.id) return;
-    const dx = event.clientX - planetDrag.lastX;
-    const dy = event.clientY - planetDrag.lastY;
-    planetDrag.lastX = event.clientX;
-    planetDrag.lastY = event.clientY;
-    planetDrag.vx = dx;
-    planetDrag.vy = dy;
-    turnPlanet(dx, dy);
-    if (reduceMotion) requestFrame();
-  }, { passive: true });
-  function releasePlanet(event) {
-    if (!planetDrag.active || event.pointerId !== planetDrag.id) return;
-    planetDrag.active = false;
-    hero.style.cursor = overPlanet(heroPoint(event)) ? 'grab' : '';
-    if (reduceMotion) {
-      planetDrag.vx = 0;
-      planetDrag.vy = 0;
-    }
-  }
-  hero.addEventListener('pointerup', releasePlanet, { passive: true });
-  hero.addEventListener('pointercancel', releasePlanet, { passive: true });
-
-  // [r3:navigator] Dragging empty sky orbits the view about the planet (r3-camera.js): only a
-  // press on the stage that nothing else took: off the jewel, the planet, the ships and the worlds.
+  // [r3:orbit] A drag anywhere on the backdrop, the planet and a solar system's worlds too, turns
+  // the view round its focus (r3-camera.js): any press on the stage that nothing else took, off the
+  // jewel, the ships and the readouts. A drag never also clicks.
   const orbit = createOrbit({
     hero,
     stage, // [r3:stage]
     reduceMotion,
     onMove: () => { if (reduceMotion) requestFrame(); },
-    isFree: (point, event) => !event.r3Taken && !planetDrag.active && forArt(event, point) && !overText(point)
-      && !overJewel(point) && !overPlanet(point) && !fleet.aimed(point.x, point.y) && !systemWorldAt(point)
+    isFree: (point, event) => !event.r3Taken && forArt(event, point) && !overText(point)
+      && !overJewel(point) && !fleet.aimed(point.x, point.y) && !director.aimed(point.x, point.y)
       && !event.target.closest(interactive) && !event.target.closest('.r3-survey'),
+    zoomRange: () => (planetLike() ? [Math.min(1, Math.max(0.55, (sphere.radius * 1.08 + 18) / sphere.distance)), 1.8] : lift.zoom),
   });
-  const orbitFocus = new THREE.Vector3();
-  const orbitPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
-  const orbitNdc = new THREE.Vector2();
-  const orbitSun = new THREE.Vector3();
+  hero.r3Orbit = orbit; // a test hook: orbit.set(yaw, pitch, zoom)
+  hero.addEventListener('pointermove', (event) => {
+    const point = heroPoint(event);
+    if (orbit.dragging) {
+      hero.style.cursor = 'grabbing';
+      return;
+    }
+    const onLink = event.target.closest(interactive) || event.target.closest('.r3-survey') || overText(point);
+    const body = onLink ? null : systemWorldAt(point);
+    hero.style.cursor = onLink ? '' : fleet.aimed(point.x, point.y) || director.aimed(point.x, point.y) /* [r3:director] */ ? 'crosshair' : body || overJewel(point) ? 'pointer' : 'grab';
+    waypoint.classList.toggle('is-shown', !!body);
+    if (body) {
+      waypoint.textContent = `${body.world.name} ⟫`;
+      waypoint.style.transform = `translate(${Math.round(body.x + body.radius + 8)}px, ${Math.round(body.y - 8)}px)`;
+    }
+  }, { passive: true });
+  hero.addEventListener('pointerup', (event) => {
+    if (!overText(heroPoint(event))) hero.style.cursor = 'grab';
+  }, { passive: true });
+  // The orbit as the sky reads it: sky from camera, with a little of the pointer, as if the viewer's
+  // head moved; and camera from sky.
+  const skyTurn = new THREE.Quaternion();
+  const cameraTurn = new THREE.Quaternion();
+  const turnEuler = new THREE.Euler(0, 0, 0, 'YXZ');
+  const turnMatrix = new THREE.Matrix4();
+  // With ?r3test, the scene too, to park test objects in it: the camera's frame, and the sky's about
+  // the focus (skyTurn takes the one into the other).
+  if (new URLSearchParams(location.search).has('r3test')) {
+    hero.r3Test = {
+      THREE, scene, camera, sky: skyUniforms, focus: focusNow, skyTurn, cameraTurn, lens, vista: () => vista, region: () => freeRegion,
+      toWorld: (point) => rigToWorld(point.clone()), requestFrame: () => requestFrame(),
+    };
+  }
+  const skyEye = new THREE.Vector3();
+  const skyWorld = new THREE.Quaternion();
+  const sunSeen = new THREE.Vector3();
+  const sunSeenRig = new THREE.Vector3();
+  const secondSky = new THREE.Vector3();
+  const secondRig = new THREE.Vector3();
+  const bodyAt = new THREE.Vector3();
+  const stagePoint = new THREE.Vector3();
+  const stageAt = new THREE.Vector3();
+  const sunTangent = new THREE.Vector3();
+  // The focus as zoomed: nearer the camera or farther, along the line between them; and the camera
+  // in the sky's frame.
+  function moveFocus() {
+    focusNow.copy(focus).sub(lens.home).multiplyScalar(orbit.state.zoom).add(lens.home);
+    skyEye.copy(lens.home).sub(focusNow).applyQuaternion(skyTurn);
+  }
+  // The backdrop hangs in the frame of the camera at home, which its drift and shake carry along, so
+  // it keeps its place on the stage as it always has and the ships alone sway against it. A point of
+  // that frame where it is in the scene now, and back.
+  const cameraInverse = new THREE.Quaternion();
+  function rigToWorld(point) {
+    return point.sub(lens.home).applyQuaternion(camera.quaternion).add(camera.position);
+  }
+  function worldToRig(point) {
+    return point.sub(camera.position).applyQuaternion(cameraInverse).add(lens.home);
+  }
+  // A point of the sky's frame in the scene.
+  function skyToWorld(point, out) {
+    return rigToWorld(out.set(point.x, point.y, point.z).applyQuaternion(cameraTurn).add(focusNow));
+  }
+  // Where a point in the camera's frame shows on the stage: device pixels with y up, and in z how
+  // far it is in front of the camera (negative behind it, where x and y mean nothing).
+  function onStage(point, out) {
+    stageAt.copy(point).applyMatrix4(camera.matrixWorldInverse);
+    const ahead = -stageAt.z;
+    stageAt.applyMatrix4(camera.projectionMatrix);
+    return out.set((stageAt.x * 0.5 + 0.5) * width * ratio, (stageAt.y * 0.5 + 0.5) * height * ratio, ahead);
+  }
+  // A body of the sky's frame where it shows, into placeVista()'s [x, y, radius] in device pixels.
+  function placeShown(into, body, visible) {
+    const at = onStage(skyToWorld(body, bodyAt), stagePoint);
+    const shows = visible && at.z > 0;
+    into[0] = shows ? at.x : -1e5;
+    into[1] = shows ? at.y : -1e5;
+    into[2] = shows ? (body.w / (at.z * lens.pxTan)) * ratio : 0;
+  }
+  // Toward a sun just past the planet's limb as seen from home, in the sky's frame: the planet's
+  // centre turned toward a direction on the stage (x, y up) by the angle its limb subtends, times
+  // reach. Where the sun shows, and its flare.
+  function limbSun(x, y, reach, out) {
+    const centre = rayA.copy(focus).sub(lens.home).normalize();
+    lens.ray(planet.x + x * 40, height - planet.y - y * 40, sunTangent);
+    sunTangent.addScaledVector(centre, -sunTangent.dot(centre)).normalize();
+    const angle = Math.asin(Math.min(1, sphere.radius / sphere.distance)) * reach;
+    return out.copy(centre).multiplyScalar(Math.cos(angle)).addScaledVector(sunTangent, Math.sin(angle));
+  }
+  // The light on the planet and the ships, fixed in the sky as the sun is: from beyond the planet
+  // on the sun's side of the stage (x, y up), well above where the sun shows, since a sun seen right
+  // on the limb would light only a hairline of it.
+  function sunLight(x, y, rise, out) {
+    return out.set(x * 0.55, y * 0.55, -(0.84 - 0.1 * rise)).normalize();
+  }
+  // A sun's place on the stage, device pixels, from its direction in the camera's frame at home; 0
+  // when it is behind the viewer.
+  function showSun(direction, out) {
+    const at = onStage(bodyAt.copy(direction).applyQuaternion(camera.quaternion).multiplyScalar(300).add(camera.position), stagePoint);
+    if (at.z <= 0) return 0;
+    out.set(at.x, at.y);
+    return 1;
+  }
+  // Whether the backdrop hides every one of these points of an object (the camera's frame): the
+  // planet or a moon, a star, a hole's shadow. A contact's brackets dim while it does (r3-ships.js).
+  const hiders = Array.from({ length: 3 }, () => new THREE.Vector4());
+  const hiddenPoint = new THREE.Vector3();
+  const hiddenRay = new THREE.Vector3();
+  const hiddenFrom = new THREE.Vector3();
+  function occluded(object, points) {
+    let count = 0;
+    if (planetLike()) {
+      hiders[count++].copy(skyUniforms.uPlanet.value);
+      if (skyUniforms.uMoonA.value.w > 0) hiders[count++].copy(skyUniforms.uMoonA.value);
+      if (skyUniforms.uMoonB.value.w > 0) hiders[count++].copy(skyUniforms.uMoonB.value);
+    } else if (vista.kind !== 'heatDeath' && lift.a.w > 0) {
+      hiders[count++].copy(lift.a);
+      if (vista.kind === 'blackHole' || vista.kind === 'quasar') hiders[0].w *= 2.6;
+      if (vista.kind === 'binary') hiders[count++].copy(lift.b);
+    }
+    if (!count || jump.active) return false;
+    object.updateMatrixWorld(true);
+    for (const corner of points) {
+      worldToRig(hiddenPoint.copy(corner).applyMatrix4(object.matrixWorld)).sub(focusNow).applyQuaternion(skyTurn);
+      hiddenRay.subVectors(hiddenPoint, skyEye);
+      const reach = hiddenRay.length();
+      hiddenRay.divideScalar(Math.max(reach, 1e-6));
+      let hidden = false;
+      for (let i = 0; i < count && !hidden; i++) {
+        const body = hiders[i];
+        hiddenFrom.set(skyEye.x - body.x, skyEye.y - body.y, skyEye.z - body.z);
+        const b = hiddenFrom.dot(hiddenRay);
+        const h = b * b - hiddenFrom.lengthSq() + body.w * body.w;
+        if (h > 0 && -b - Math.sqrt(h) > 0 && -b - Math.sqrt(h) < reach) hidden = true;
+      }
+      if (!hidden) return false;
+    }
+    return true;
+  }
+  // How much of a sun in this direction (the sky's frame) the planet leaves in view.
+  function sunClear(direction) {
+    const b = skyEye.dot(direction);
+    if (b >= 0) return 1;
+    const impact = Math.sqrt(Math.max(skyEye.lengthSq() - b * b, 0)) / sphere.radius;
+    return THREE.MathUtils.smoothstep(impact, 0.995, 1.003);
+  }
 
   let spinBase = 0;
   // Sparkles: now and then one of the four points flashes, and the top one always does in a spin.
@@ -1583,98 +1859,112 @@ function start(hero, art) {
     presence += (wanted - presence) * (reduceMotion ? 1 : Math.min(1, dt * 3));
     jewelUniforms.uPresence.value = presence;
     drift.value.set(eased.x * 0.5, eased.y * 0.35);
-    // The orbit: the sky streams to the left and a little down, the far stars at six pixels a
-    // second. It wraps at a large period so the numbers stay small.
-    scroll.value.set((t * 6.0) % 100000, (t * 1.1) % 100000);
-    // [r3:navigator] Turning the view pans the stars and clouds a hero's width per field of view.
+    // [r3:orbit] The orbit, and a little of the pointer as though the viewer's head moved: the turn
+    // from the camera's frame into the sky's, about the backdrop's focus.
     orbit.update(reduceMotion ? 0 : dt);
-    if (orbit.turned) {
-      const across = width / Math.max(0.2, 2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * camera.aspect));
-      scroll.value.x -= orbit.state.yaw * across;
-      scroll.value.y += orbit.state.pitch * across;
-    }
+    const sway = reduceMotion ? 0 : 1;
+    turnEuler.set(orbit.state.pitch - drift.value.y * 0.02 * sway, orbit.state.yaw - drift.value.x * 0.03 * sway, 0, 'YXZ');
+    skyTurn.setFromEuler(turnEuler);
+    cameraTurn.copy(skyTurn).invert();
+    // The camera drifts, as if on a slow orbit of its own.
+    camera.position.set(Math.sin(t * 0.05) * 0.35, Math.sin(t * 0.07) * 0.18, 10);
+    camera.lookAt(0, 0, 0);
+    camera.updateMatrixWorld();
+    cameraInverse.copy(camera.quaternion).invert();
 
     // The sun rises and sinks on the limb over about ninety seconds: a diamond ring at its lowest.
     const rise = 0.5 + 0.5 * Math.sin(t * 0.07 - 0.6);
     const sunAt = sunAngle + 0.025 * Math.sin(t * 0.021);
-    const along = new THREE.Vector2(Math.sin(sunAt), Math.cos(sunAt));
-    sunDir.value.set(along.x * 0.55, along.y * 0.55, -(0.84 - 0.1 * rise)).normalize();
-    // The planet turns about an axis leaning toward the viewer, so the surface rolls along the arc
-    // out of the night and into the sunrise: once in about three and a half minutes, some fifteen
-    // pixels a second at the crown of a wide hero. The cloud deck turns a little faster, so it
-    // slides over the ground.
-    // A drag's spin carries on after release, fading over about a second and a half.
-    if (!planetDrag.active && (planetDrag.vx !== 0 || planetDrag.vy !== 0)) {
-      const decay = Math.exp(-dt * 2.2);
-      planetDrag.vx *= decay;
-      planetDrag.vy *= decay;
-      if (Math.abs(planetDrag.vx) + Math.abs(planetDrag.vy) < 0.02) {
-        planetDrag.vx = 0;
-        planetDrag.vy = 0;
+    if (planetLike()) {
+      moveFocus();
+      // The planet turns about an axis leaning toward the viewer, so the surface rolls along the
+      // arc out of the night and into the sunrise: once in about three and a half minutes, some
+      // fifteen pixels a second at the crown of a wide hero. The cloud deck turns a little faster,
+      // so it slides over the ground.
+      spinMatrix.makeRotationY(t * PLANET_SPIN * world.spin + world.phase).multiply(alignAxis);
+      skyUniforms.uBody.value.setFromMatrix4(spinMatrix);
+      if (world.face) placeFace(dt); // [r3:howard]
+      spinMatrix.makeRotationY(t * PLANET_SPIN * world.spin * 1.35 + world.phase * 1.7 + 0.8).multiply(alignAxis);
+      skyUniforms.uCloudBody.value.setFromMatrix4(spinMatrix);
+      // [r3:orbit] The sun stands in the sky's frame, just past the limb where the layout put it as
+      // seen from home; turned, it lights the planet from there, and shows where it projects.
+      limbSun(Math.sin(sunAt), Math.cos(sunAt), 1.004 + 0.02 * rise, sunSeen);
+      sunLight(Math.sin(sunAt), Math.cos(sunAt), rise, skyUniforms.uSunDir.value);
+      sunDir.value.copy(skyUniforms.uSunDir.value).applyQuaternion(cameraTurn);
+      sunSeenRig.copy(sunSeen).applyQuaternion(cameraTurn);
+      const sunShows = showSun(sunSeenRig, compositeUniforms.uSunPx.value);
+      compositeUniforms.uSunShow.value = (0.25 + 0.75 * Math.min(1, rise * 1.6 + 0.2)) * (narrow ? 0.55 : 1) * sunShows * sunClear(sunSeen);
+      // A twin-sun world's second sun trails the first along the limb, lower and smaller.
+      if (world.suns > 1) {
+        const trail = -0.12;
+        limbSun(Math.sin(sunAt + trail), Math.cos(sunAt + trail), 1.002 + 0.012 * rise, secondSky);
+        secondRig.copy(secondSky).applyQuaternion(cameraTurn);
+        const secondShows = showSun(secondRig, compositeUniforms.uSun2Px.value);
+        compositeUniforms.uSun2Show.value = compositeUniforms.uSunShow.value * 0.8 * secondShows * sunClear(secondSky);
       } else {
-        turnPlanet(planetDrag.vx * dt * 60, planetDrag.vy * dt * 60);
+        compositeUniforms.uSun2Show.value = 0;
       }
-    }
-    dragInverse.makeRotationFromQuaternion(turned).invert();
-    spinMatrix.makeRotationY(t * PLANET_SPIN * world.spin + world.phase).multiply(alignAxis).multiply(dragInverse).multiply(orbit.matrix); // [r3:navigator]
-    skyUniforms.uBody.value.setFromMatrix4(spinMatrix);
-    if (world.face) placeFace(dt); // [r3:howard]
-    skyUniforms.uRingNormal.value.copy(ringNormal).applyQuaternion(turned).applyQuaternion(orbit.inverse); // [r3:navigator]
-    spinMatrix.makeRotationY(t * PLANET_SPIN * world.spin * 1.35 + world.phase * 1.7 + 0.8).multiply(alignAxis).multiply(dragInverse).multiply(orbit.matrix); // [r3:navigator]
-    skyUniforms.uCloudBody.value.setFromMatrix4(spinMatrix);
-    const lift = planet.radius * (1.0 + 0.004 + 0.02 * rise);
-    const sunX = planet.x - drift.value.x * 26 + along.x * lift;
-    const sunY = planet.y - drift.value.y * 26 + along.y * lift;
-    compositeUniforms.uSunPx.value.set(sunX * ratio, sunY * ratio);
-    compositeUniforms.uPlanetPx.value.set((planet.x - drift.value.x * 26) * ratio, (planet.y - drift.value.y * 26) * ratio, planet.radius * ratio);
-    compositeUniforms.uSunShow.value = (0.25 + 0.75 * Math.min(1, rise * 1.6 + 0.2)) * (narrow ? 0.55 : 1);
-    // [r3:navigator] Turned, the sun moves round the limb, and hides once it is behind the viewer.
-    if (orbit.turned) {
-      orbit.toView(sunDir.value, orbitSun);
-      const reach = Math.hypot(orbitSun.x, orbitSun.y);
-      if (reach > 1e-4) {
-        compositeUniforms.uSunPx.value.set((planet.x - drift.value.x * 26 + (orbitSun.x / reach) * lift) * ratio, (planet.y - drift.value.y * 26 + (orbitSun.y / reach) * lift) * ratio);
+      // The moons where they show now, for the weather's eclipses.
+      for (let i = 0; i < 2; i++) {
+        const moon = i ? skyUniforms.uMoonB.value : skyUniforms.uMoonA.value;
+        const shown = i ? skyUniforms.uMoonPxB.value : skyUniforms.uMoonPxA.value;
+        if (moon.w <= 0) continue;
+        const at = onStage(skyToWorld(moon, bodyAt), stagePoint);
+        shown.set(at.x, at.y, at.z > 0 ? (moon.w / (at.z * lens.pxTan)) * ratio : 0, shown.w);
       }
-      compositeUniforms.uSunShow.value *= THREE.MathUtils.clamp((0.15 - orbitSun.z) / 0.35, 0, 1);
-    }
-    // A twin-sun world's second sun trails the first along the limb, lower and smaller.
-    if (world.suns > 1) {
-      const trail = 0.12;
-      const second = new THREE.Vector2(along.x * Math.cos(-trail) - along.y * Math.sin(-trail), along.x * Math.sin(-trail) + along.y * Math.cos(-trail));
-      const lift2 = planet.radius * (1.0 + 0.002 + 0.012 * rise);
-      compositeUniforms.uSun2Px.value.set((planet.x - drift.value.x * 26 + second.x * lift2) * ratio, (planet.y - drift.value.y * 26 + second.y * lift2) * ratio);
-      compositeUniforms.uSun2Show.value = compositeUniforms.uSunShow.value * 0.8;
+      environment.place(null); // [r3:environment]
     } else {
-      compositeUniforms.uSun2Show.value = 0;
-    }
-    if (planetLike()) environment.place(null); // [r3:environment]
-    if (!planetLike()) {
-      // Another backdrop: its bodies placed for this moment, and its light lighting the scene.
+      // Another backdrop: its bodies placed for this moment, stood up in three dimensions, and its
+      // light lighting the scene.
       const placed = placeVista(vista, { width, height, ratio, region: freeRegion, time: t, worlds: WORLDS });
-      environment.place(placed); // [r3:environment]
+      liftVista(vista, placed, lens, lift, t);
+      focus.copy(lift.focus);
+      moveFocus();
       const sky = skyUniforms;
-      sky.uBodyA.value.set(...placed.a);
-      sky.uBodyB.value.set(...placed.b);
+      sky.uBodyA.value.copy(lift.a);
+      sky.uBodyB.value.copy(vista.kind === 'heatDeath' ? lift.bang : lift.b);
+      sky.uBodyPx.value.copy(lift.px);
+      sky.uBangAge.value = vista.kind === 'heatDeath' && vista.bang ? lift.px.w : 0;
       sky.uVistaParams.value.set(...placed.params);
       sky.uColourA.value.set(...placed.colourA);
       sky.uColourB.value.set(...placed.colourB);
-      sky.uWorldCount.value = placed.planets.length;
-      placed.planets.forEach((body, i) => {
-        sky.uWorlds.value[i].set(body.x * ratio, (height - body.y) * ratio, body.radius * ratio, body.behind ? 1 : 0);
-        sky.uOrbits.value[i].set(body.orbit[0], body.orbit[1], 0, 0);
-        sky.uWorldTint.value[i].copy(tintOf(body.world.land));
-        sky.uWorldTintB.value[i].copy(tintOf(body.world.bands ? body.world.highland : body.world.lowland));
-      });
-      systemWorlds = placed.planets;
+      sky.uWorldCount.value = lift.count;
+      sky.uOrbitU.value.copy(lift.orbitU);
+      sky.uOrbitV.value.copy(lift.orbitV);
+      sky.uOrbitN.value.copy(lift.orbitN);
+      systemWorlds.length = 0;
+      for (let i = 0; i < lift.count; i++) {
+        const slot = lift.worlds[i];
+        sky.uWorlds.value[i].set(slot.centre.x, slot.centre.y, slot.centre.z, slot.radius);
+        sky.uOrbitRadii.value[i] = lift.radii[i];
+        sky.uWorldTint.value[i].copy(tintOf(slot.world.land));
+        sky.uWorldTintB.value[i].copy(tintOf(slot.world.bands ? slot.world.highland : slot.world.lowland));
+        // Where it shows, for a click and its name.
+        const at = onStage(skyToWorld(slot.centre, bodyAt), stagePoint);
+        if (at.z > 1) systemWorlds.push({ x: at.x / ratio, y: height - at.y / ratio, radius: Math.max(4, slot.radius / (at.z * lens.pxTan)), world: slot.world });
+      }
       const dying = vista.kind === 'heatDeath' ? placed.params[0] : 0;
       sky.uDying.value = dying;
       nebulaMaterial.uniforms.uFade.value = dying;
       if (vista.kind === 'heatDeath' && vista.bang && t - vista.bang.born > 3.2) beginJump();
-      const [lightX, lightY] = placed.light;
-      sunDir.value.set((lightX - width * 0.62) / height, -(lightY - height * 0.45) / height, -0.75).normalize();
-      compositeUniforms.uSunPx.value.set(lightX * ratio, (height - lightY) * ratio);
-      compositeUniforms.uSunShow.value = { dwarf: 0.45, binary: 0.35, system: 0.5 }[vista.kind] || 0;
+      // The light: the main body, lighting the ships from where it stands; its flare where it shows.
+      skyToWorld(lift.light, bodyAt);
+      sunDir.value.copy(bodyAt).normalize();
+      const shown = onStage(bodyAt, stagePoint);
+      compositeUniforms.uSunPx.value.set(shown.x, shown.y);
+      compositeUniforms.uSunShow.value = ({ dwarf: 0.45, binary: 0.35, system: 0.5 }[vista.kind] || 0) * (shown.z > 0 ? 1 : 0);
+      compositeUniforms.uSun2Show.value = 0;
       compositeUniforms.uPlanetPx.value.set(-1e5, -1e5, 1);
+      // For the weather (r3-environment.js): the bodies where they show now, and the directions of
+      // a binary's two lights.
+      placed.light = [shown.x / ratio, height - shown.y / ratio];
+      placeShown(placed.a, lift.a, shown.z > 0);
+      if (vista.kind === 'binary') {
+        placeShown(placed.b, lift.b, true);
+        placed.dirA = skyToWorld(lift.a, new THREE.Vector3()).normalize();
+        placed.dirB = skyToWorld(lift.b, new THREE.Vector3()).normalize();
+      }
+      environment.place(placed); // [r3:environment]
     }
 
     // The star drifts round the hero and bounces off its edges like an old screensaver, the point
@@ -1743,23 +2033,6 @@ function start(hero, art) {
     pivot.rotation.y += pilot.lean.y;
     pilot.update(dt, pivot.position, jewelScale); // [r3:pilot] engine, trail, shield, hails
 
-    // The camera drifts, as if on a slow orbit of its own.
-    camera.position.set(Math.sin(t * 0.05) * 0.35, Math.sin(t * 0.07) * 0.18, 10);
-    camera.lookAt(0, 0, 0);
-    // [r3:navigator] The orbit turns the camera rigidly about the world under the planet's centre,
-    // which so keeps its place on screen, and the jewel with it, so the logo stays put too.
-    if (orbit.turned) {
-      const focusX = planetLike() ? planet.x - drift.value.x * 26 : (freeRegion[0] + freeRegion[2]) / 2;
-      const focusY = planetLike() ? height - (planet.y - drift.value.y * 26) : (freeRegion[1] + freeRegion[3]) / 2;
-      orbitNdc.set((focusX / width) * 2 - 1, 1 - (focusY / height) * 2);
-      camera.updateMatrixWorld();
-      raycaster.setFromCamera(orbitNdc, camera);
-      if (!raycaster.ray.intersectPlane(orbitPlane, orbitFocus)) orbitFocus.set(0, 0, 0);
-      orbit.carry(camera, orbitFocus);
-      orbit.carry(pivot, orbitFocus);
-      camera.updateMatrixWorld();
-    }
-    skyUniforms.uSunDir.value.copy(sunDir.value).applyQuaternion(orbit.inverse); // [r3:navigator]
     jewelUniforms.uCamera.value = camera.position;
     jewelUniforms.uSunDir.value.copy(sunDir.value);
 
@@ -1782,9 +2055,28 @@ function start(hero, art) {
     compositeUniforms.uGlintPx.value.set((tipWorld.x * 0.5 + 0.5) * width * ratio, (tipWorld.y * 0.5 + 0.5) * height * ratio);
     compositeUniforms.uGlint.value = Math.max(glint, sparkle * 0.8) * (narrow ? 0.6 : 1);
 
-    // The ships, and any hyperspace flash they make. They hide behind the planet where the sky
-    // draws it.
-    fleet.planet((planet.x - drift.value.x * 26) * ratio, (planet.y - drift.value.y * 26) * ratio, planet.radius * ratio);
+    // The ships, and any hyperspace flash they make. [r3:orbit] They hide behind the planet by the
+    // depth the sky writes; its disc is only for the scope's lanes (r3-sensors.js).
+    if (planetLike()) {
+      // The disc's radius is taken toward the sun, where the flare and the weather measure the limb
+      // from: seen off the axis the planet is not quite round.
+      const centre = onStage(rigToWorld(rayA.copy(focusNow)), stagePoint);
+      const cx = centre.x;
+      const cy = centre.y;
+      const toward = rayA.sub(camera.position);
+      const angle = Math.asin(Math.min(1, sphere.radius / toward.length()));
+      toward.normalize();
+      const seen = sunTangent.copy(sunSeenRig).applyQuaternion(camera.quaternion);
+      rayB.copy(seen).addScaledVector(toward, -seen.dot(toward));
+      if (rayB.lengthSq() < 1e-8) rayB.set(0, 1, 0).addScaledVector(toward, -toward.y);
+      rayB.normalize();
+      const limb = onStage(bodyAt.copy(camera.position).addScaledVector(toward, Math.cos(angle) * 100).addScaledVector(rayB, Math.sin(angle) * 100), stagePoint);
+      const radius = centre.z > 0 && limb.z > 0 ? Math.hypot(limb.x - cx, limb.y - cy) : 1;
+      compositeUniforms.uPlanetPx.value.set(cx, cy, Math.max(radius, 1));
+      fleet.planet(cx, cy, Math.max(radius, 1));
+    } else {
+      fleet.planet(-1e5, -1e5, 1);
+    }
     fleet.player(jewelPx.x, jewelPx.y); // [r3:memory]
     director.update(reduceMotion ? 0 : dt); // [r3:director]
     environment.update(reduceMotion ? 0 : dt, jump.active); // [r3:environment]
@@ -1800,11 +2092,25 @@ function start(hero, art) {
     compositeUniforms.uFlash.value = shipFlash.strength;
     compositeUniforms.uFlashSize.value = shipFlash.size * (narrow ? 0.6 : 1);
 
-    // Render: the nebulae every third frame, then the sky, the jewel, the bloom and the composite.
-    nebulaAge++;
-    if (nebulaAge >= 3 || reduceMotion) {
+    // [r3:orbit] The camera as the sky reads it, now it has settled for the frame.
+    const sky = skyUniforms;
+    sky.uCamPos.value.copy(camera.position);
+    sky.uSkyEye.value.copy(skyEye);
+    skyWorld.copy(skyTurn).multiply(cameraInverse);
+    sky.uSkyFromCamera.value.setFromMatrix4(turnMatrix.makeRotationFromQuaternion(skyWorld));
+    sky.uViewProj.value.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+    sky.uInvViewProj.value.copy(sky.uViewProj.value).invert();
+    lens.ray(skyUniforms.uHyperAt.value.x / ratio, height - skyUniforms.uHyperAt.value.y / ratio, sky.uHyperDir.value).applyQuaternion(skyTurn);
+
+    // Render: the nebulae's cube a face every other frame (all six when the sky changes), then the
+    // sky, which writes its depth, the ships and the jewel against it, the bloom and the composite.
+    if (nebulaAge === Infinity) {
+      for (let face = 0; face < 6; face++) renderNebula(face);
       nebulaAge = 0;
-      pass(nebulaMaterial, nebulaTarget);
+    } else if (!reduceMotion && ++nebulaAge >= 2) {
+      nebulaAge = 0;
+      renderNebula(nebulaFace);
+      nebulaFace = (nebulaFace + 1) % 6;
     }
     renderer.setRenderTarget(sceneTarget);
     renderer.clear();
@@ -1830,6 +2136,11 @@ function start(hero, art) {
     if (visible && !reduceMotion && !document.hidden) requestFrame();
   }
   let nebulaAge = Infinity;
+  let nebulaFace = 0;
+  function renderNebula(face) {
+    nebulaMaterial.uniforms.uFace.value = face;
+    pass(nebulaMaterial, nebulaCube, face);
+  }
 
   function requestFrame() {
     if (running || lost || !compiled) return;
@@ -1876,18 +2187,20 @@ function start(hero, art) {
     const key = `${planet.x}|${planet.y}|${planet.radius}|${width}|${height}`;
     if (key !== faceState.placedFor) {
       faceState.placedFor = key;
-      // The visible disc: points of the stage on the planet, as normals.
+      // The visible disc: points of the stage on the planet, as normals, met by the rays from home.
+      // [r3:orbit]
       const centre = faceView.centre.set(0, 0, 0);
       const points = [];
+      const eye = rayB.copy(lens.home).sub(focus).divideScalar(sphere.radius);
       for (let i = 0; i <= 28; i++) {
         for (let j = 0; j <= 14; j++) {
-          const x = (i / 28) * width;
-          const yDown = (j / 14) * height;
-          const qx = (x - planet.x) / planet.radius;
-          const qy = (height - yDown - planet.y) / planet.radius;
-          const r2 = qx * qx + qy * qy;
-          if (r2 > 0.94) continue;
-          faceSample.set(qx, qy, Math.sqrt(1 - r2));
+          const d = lens.ray((i / 28) * width, (j / 14) * height, rayA);
+          const b = eye.dot(d);
+          const h = b * b - eye.lengthSq() + 1;
+          if (h <= 0 || b >= 0) continue;
+          faceSample.copy(eye).addScaledVector(d, -b - Math.sqrt(h));
+          // Clear of the limb, where the face would be squeezed thin.
+          if (faceSample.dot(d) > -0.25) continue;
           points.push(faceSample.clone());
           centre.add(faceSample);
         }
@@ -1961,11 +2274,7 @@ function start(hero, art) {
     const nebula = nebulaMaterial.uniforms;
     nebula.uViolet.value.copy(violet).offsetHSL(world.sky.hue, 0, 0);
     nebula.uThird.value.copy(worldColor(world.air)).multiplyScalar(0.8);
-    nebula.uCloudsAt.value.set(...world.sky.cyan, ...world.sky.violet);
-    nebula.uThirdAt.value.set(...world.sky.third);
-    nebula.uSpread.value.set(...world.sky.spread);
-    nebula.uStrength.value.set(...world.sky.strength);
-    nebula.uNoise.value.set(...world.sky.offset, world.sky.scale, world.sky.warp);
+    nebula.uStrength.value.set(...world.sky.strength); // [r3:orbit] where the clouds sit: placeNebula()
     const sky = skyUniforms;
     sky.uLowland.value.copy(worldColor(world.lowland));
     sky.uLand.value.copy(worldColor(world.land));
@@ -1976,8 +2285,7 @@ function start(hero, art) {
     sky.uWorldB.value.set(world.ice, world.lava, world.bands, world.floating);
     sky.uWorldC.value.set(wetness(world), world.aurora, world.ringed ? 1 : 0, 0);
     sky.uSeed.value.set(...world.seed);
-    ringNormal.set(world.ringTilt[0] * 0.5, 0.2 + world.ringTilt[1] * 0.3, 1).normalize();
-    sky.uRingNormal.value.copy(ringNormal);
+    sky.uRingNormal.value.set(world.ringTilt[0] * 0.5, 0.2 + world.ringTilt[1] * 0.3, 1).normalize(); // [r3:orbit] fixed in the sky
     sky.uRingColor.value.copy(worldColor(world.highland)).lerp(worldColor(world.cloud), 0.5).multiplyScalar(0.9);
     sky.uRingSeed.value = world.ringBands;
     sky.uMoonColorA.value.copy(worldColor('#9a948c')).lerp(worldColor('#c2ae92'), world.moonSeeds[0]);
@@ -2012,10 +2320,6 @@ function start(hero, art) {
     vista.born = time.value;
     worldAxis.set(world.tilt[0], world.tilt[1], 1).normalize();
     alignAxis.makeRotationFromQuaternion(new THREE.Quaternion().setFromUnitVectors(worldAxis, new THREE.Vector3(0, 1, 0)));
-    spinAxisView.copy(worldAxis);
-    turned.identity();
-    planetDrag.vx = 0;
-    planetDrag.vy = 0;
     showSurvey();
     nebulaAge = Infinity;
   }
@@ -2095,6 +2399,7 @@ function start(hero, art) {
     memory.record('jump');
     memory.record('survey', { world: world.name });
     fleet = createFleet({ scene, camera, time, sunDir, sunColor, air, reduceMotion, overlay: art || hero, anisotropy: renderer.capabilities.getMaxAnisotropy(), random: world.random, scenario: jump.scenario || pickScenario(world.random, { fresh: true }), memory, fresh: true }); // [r3:chart] jump.scenario, fresh
+    fleet.kit.occluded = occluded; // [r3:orbit]
     director.dispose(); // [r3:director] the old one's ships went with the old fleet
     director = createDirector({ kit: fleet.kit, fleet, memory, random: world.random });
     director.onArrive({ world: world.name, vista: vista.kind });
