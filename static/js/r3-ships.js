@@ -816,6 +816,8 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
   // count particles of a kind from origin, their speed, size and life drawn from the given ranges,
   // spreading about a direction if one is given, in every direction if not.
   function emit(origin, count, kind, [speedLow, speedHigh], [sizeLow, sizeHigh], [lifeLow, lifeHigh], toward = null, spread = 1) {
+    // [r3:qa] A phone's hero is small and its fill rate is short: half the sparks and fire read the same.
+    if (view.narrow) count = Math.ceil(count * 0.5);
     const start = particleGeometry.getAttribute('position');
     const velocity = particleGeometry.getAttribute('aVelocity');
     const life = particleGeometry.getAttribute('aLife');

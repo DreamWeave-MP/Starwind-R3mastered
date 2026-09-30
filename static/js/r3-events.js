@@ -226,6 +226,8 @@ export function createDirector({ kit, fleet = null, memory = null, random = kit.
   let hazeDirty = false;
   const scratch = new THREE.Vector3();
   function puff(origin, count, kind, [speedLow, speedHigh], [sizeLow, sizeHigh], [lifeLow, lifeHigh], toward = null, spread = 1) {
+    // [r3:qa] Soft haze is overdraw; a phone gets half of it.
+    if (view.narrow && random() < 0.5) return;
     const start = hazeGeometry.getAttribute('position');
     const velocity = hazeGeometry.getAttribute('aVelocity');
     const life = hazeGeometry.getAttribute('aLife');
@@ -462,9 +464,10 @@ export function createDirector({ kit, fleet = null, memory = null, random = kit.
   const MAX_CHUNKS = 18;
   function wreckage({ position, length, quaternion, velocity, side }) {
     if (reduceMotion) return;
-    const count = 3 + Math.floor(random() * 6);
+    const count = view.narrow ? 2 + Math.floor(random() * 3) : 3 + Math.floor(random() * 6); // [r3:qa] fewer on a phone
+    const cap = view.narrow ? 8 : MAX_CHUNKS;
     for (let i = 0; i < count; i++) {
-      while (chunks.filter((chunk) => !chunk.gone).length >= MAX_CHUNKS) {
+      while (chunks.filter((chunk) => !chunk.gone).length >= cap) {
         const oldest = chunks.find((chunk) => !chunk.gone);
         remove(oldest);
       }
