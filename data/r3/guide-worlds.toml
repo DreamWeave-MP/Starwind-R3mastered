@@ -1,0 +1,244 @@
+# The hero's worlds (static/js/r3-worlds.js) and the names the guide's records use for them.
+# A guide page belongs to a world when its Key locations row names a place there: the name
+# followed by a comma or a space, as in "Tatooine, Sandriver" or "Tatooine Czerka Office".
+# Add a spelling to `match` when the records spell a world differently.
+
+[[worlds]]
+name = "Tatooine"
+slug = "tatooine"
+match = ["Tatooine", "TatooineRace"]
+
+[[worlds]]
+name = "Taris"
+slug = "taris"
+match = ["Taris"]
+
+[[worlds]]
+name = "Dantooine"
+slug = "dantooine"
+match = ["Dantooine"]
+
+[[worlds]]
+name = "Kashyyyk"
+slug = "kashyyyk"
+match = ["Kashyyyk", "Kashyyk", "Kashyk"]
+
+[[worlds]]
+name = "Manaan"
+slug = "manaan"
+match = ["Manaan"]
+
+[[worlds]]
+name = "Korriban"
+slug = "korriban"
+match = ["Korriban"]
+
+[[worlds]]
+name = "Hoth"
+slug = "hoth"
+match = ["Hoth"]
+
+[[worlds]]
+name = "Endor"
+slug = "endor"
+match = ["Endor"]
+
+[[worlds]]
+name = "Naboo"
+slug = "naboo"
+match = ["Naboo"]
+
+[[worlds]]
+name = "Coruscant"
+slug = "coruscant"
+match = ["Coruscant"]
+
+[[worlds]]
+name = "Mustafar"
+slug = "mustafar"
+match = ["Mustafar"]
+
+[[worlds]]
+name = "Bespin"
+slug = "bespin"
+match = ["Bespin"]
+
+[[worlds]]
+name = "Kamino"
+slug = "kamino"
+match = ["Kamino"]
+
+[[worlds]]
+name = "Geonosis"
+slug = "geonosis"
+match = ["Geonosis"]
+
+[[worlds]]
+name = "Jakku"
+slug = "jakku"
+match = ["Jakku"]
+
+[[worlds]]
+name = "Alderaan"
+slug = "alderaan"
+match = ["Alderaan"]
+
+[[worlds]]
+name = "Yavin 4"
+slug = "yavin-4"
+match = ["Yavin 4"]
+
+[[worlds]]
+name = "Dagobah"
+slug = "dagobah"
+match = ["Dagobah"]
+
+[[worlds]]
+name = "Scarif"
+slug = "scarif"
+match = ["Scarif"]
+
+[[worlds]]
+name = "Crait"
+slug = "crait"
+match = ["Crait"]
+
+[[worlds]]
+name = "Felucia"
+slug = "felucia"
+match = ["Felucia"]
+
+[[worlds]]
+name = "Mon Cala"
+slug = "mon-cala"
+match = ["Mon Cala"]
+
+[[worlds]]
+name = "Lothal"
+slug = "lothal"
+match = ["Lothal"]
+
+[[worlds]]
+name = "Nar Shaddaa"
+slug = "nar-shaddaa"
+match = ["Nar Shaddaa"]
+
+[[worlds]]
+name = "Corellia"
+slug = "corellia"
+match = ["Corellia"]
+
+[[worlds]]
+name = "Kessel"
+slug = "kessel"
+match = ["Kessel"]
+
+[[worlds]]
+name = "Mygeeto"
+slug = "mygeeto"
+match = ["Mygeeto"]
+
+[[worlds]]
+name = "Ryloth"
+slug = "ryloth"
+match = ["Ryloth"]
+
+[[worlds]]
+name = "Sullust"
+slug = "sullust"
+match = ["Sullust"]
+
+[[worlds]]
+name = "Christophsis"
+slug = "christophsis"
+match = ["Christophsis"]
+
+[[worlds]]
+name = "Ilum"
+slug = "ilum"
+match = ["Ilum"]
+
+[[worlds]]
+name = "Exegol"
+slug = "exegol"
+match = ["Exegol"]
+
+[[worlds]]
+name = "Ahch-To"
+slug = "ahch-to"
+match = ["Ahch-To"]
+
+[[worlds]]
+name = "Takodana"
+slug = "takodana"
+match = ["Takodana"]
+
+[[worlds]]
+name = "Jedha"
+slug = "jedha"
+match = ["Jedha"]
+
+[[worlds]]
+name = "Eadu"
+slug = "eadu"
+match = ["Eadu"]
+
+[[worlds]]
+name = "Dathomir"
+slug = "dathomir"
+match = ["Dathomir"]
+
+[[worlds]]
+name = "Umbara"
+slug = "umbara"
+match = ["Umbara"]
+
+[[worlds]]
+name = "Mandalore"
+slug = "mandalore"
+match = ["Mandalore"]
+
+[[worlds]]
+name = "Yavin"
+slug = "yavin"
+match = ["Yavin"]
+
+[[worlds]]
+name = "Onderon"
+slug = "onderon"
+match = ["Onderon"]
+
+[[worlds]]
+name = "Malachor V"
+slug = "malachor-v"
+match = ["Malachor V"]
+
+[[worlds]]
+name = "Nal Hutta"
+slug = "nal-hutta"
+match = ["Nal Hutta"]
+
+[[worlds]]
+name = "Rodia"
+slug = "rodia"
+match = ["Rodia"]
+
+[[worlds]]
+name = "Mimban"
+slug = "mimban"
+match = ["Mimban"]
+
+[[worlds]]
+name = "Kuat"
+slug = "kuat"
+match = ["Kuat"]
+
+[[worlds]]
+name = "Fondor"
+slug = "fondor"
+match = ["Fondor"]
+
+[[worlds]]
+name = "Lah'mu"
+slug = "lahmu"
+match = ["Lah'mu"]
