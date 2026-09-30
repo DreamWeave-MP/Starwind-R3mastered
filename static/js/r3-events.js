@@ -11,11 +11,17 @@
 
 import * as THREE from './vendor/three.module.min.js';
 import { buildCapital, buildFighter, merge, FACTIONS } from './r3-shipyard.js';
+import { ebonHawk } from './r3-shipyard-lore.js'; // [r3:lore]
 
 // Across jumps: the last events run, so none comes back twice running, and when one last ended.
 const session = { recent: [], lastEnded: -Infinity, arrivals: 0 };
 
 const CIVILIAN = { key: 'civilian', name: 'Civilian', hull: '#b3a58c', paint: '#c7902e', engine: '#ffb070', laser: '#ffd27a' };
+// [r3:lore] The Ebon Hawk's own colours: white, the prongs in red. Its turrets' bolts are not
+// described; orange keeps them apart from the Sith fighters' red.
+const HAWK = { key: 'hawk', name: 'Ebon Hawk', hull: '#d8d4ca', paint: '#a52a1e', engine: '#9fd8ff', laser: '#ff8a3a' };
+// Where the Ebon Hawk flew in Knights of the Old Republic and its sequel.
+const HAWK_WORLDS = new Set(['Taris', 'Dantooine', 'Tatooine', 'Kashyyyk', 'Manaan', 'Korriban', 'Nar Shaddaa', 'Onderon', 'Malachor V']);
 const PIRATE = { key: 'pirates', name: 'Unregistered', hull: '#6b5a4a', paint: '#8a3a1a', engine: '#ff8a4a', laser: '#ff7a2a' };
 const FREIGHTER_NAMES = ['Moldy Crow', 'Stellar Envoy', 'Wild Karrde', "Mynock's Luck", 'Ghtroc Wanderer', 'Kuat Runner', 'Bantha Drift', 'Corellian Promise'];
 const BOUNTIES = ['Dengar Vosk', 'Tessek Mul', 'Rhen Var-Oto', 'Garm Tebb', 'Sise Fromm Jr.', 'Kaar Delvin', 'Oppo Rancisis Jr.', 'Nym Kasdan'];
@@ -284,6 +290,7 @@ export function createDirector({ kit, fleet = null, memory = null, random = kit.
   }
 
   // Designs, built as needed and kept for the visit.
+  const capitalKey = (kind, shape) => `capital:${kind}${shape ? `|${JSON.stringify(shape)}` : ''}`; // [r3:lore]
   const designs = new Map();
   function design(key) {
     if (!designs.has(key)) {
@@ -292,10 +299,13 @@ export function createDirector({ kit, fleet = null, memory = null, random = kit.
       else if (key === 'probe') geometry = probeGeometry();
       else if (key === 'pod') geometry = podGeometry();
       else if (key === 'tug') geometry = tugGeometry();
+      else if (key === 'ebonHawk') geometry = ebonHawk().geometry; // [r3:lore]
       else if (key.startsWith('chunk')) geometry = chunkGeometry(Number(key.slice(5)) + 1);
       else if (key.startsWith('fighter:')) geometry = buildFighter(key.slice(8)).geometry;
       else {
-        const built = buildCapital(key.slice(8), random);
+        // [r3:lore] A capital's key carries its class's shape: capital:wedge|{"half":0.24,...}.
+        const [kind, shape] = key.slice(8).split('|');
+        const built = buildCapital(kind, random, shape ? JSON.parse(shape) : undefined);
         designs.set(key, { geometry: built.geometry, extremes: built.extremes });
         return designs.get(key);
       }
@@ -315,7 +325,7 @@ export function createDirector({ kit, fleet = null, memory = null, random = kit.
   function spawn({ key, side, length, position, velocity, heading = null, up = new THREE.Vector3(0, 1, 0), label = null, contactClass = null,
     textured = false, windows = 1, haze: distance = 0, char = 0, tumble = null, hyper = true, hp = 1, shootable = true, think = null }) {
     const { geometry, extremes } = design(key);
-    const material = shipMaterial(side, { textured, panels: textured ? 30 : 18, windows, haze: distance });
+    const material = shipMaterial(side, { textured, panels: textured ? 30 : 18, windows, haze: distance, selfLit: side.material?.selfLit || 0 }); // [r3:lore] selfLit
     if (char > 0) {
       material.uniforms.uHull.value.multiplyScalar(1 - char * 0.75);
       material.uniforms.uPaint.value.multiplyScalar(1 - char * 0.8);
@@ -568,6 +578,66 @@ export function createDirector({ kit, fleet = null, memory = null, random = kit.
   }
 
   const EVENTS = {
+    // [r3:lore] The Ebon Hawk runs past with two Sith fighters on its tail, as it ran from Taris,
+    // its dorsal turret answering now and then. Rare, and only in Starwind's era or over the
+    // worlds it flew to.
+    hawk: {
+      weight: 0.45,
+      eligible: (context) => sides.some((side) => side.key === 'oldRepublic' || side.key === 'sith') || HAWK_WORLDS.has(context.world),
+      start() {
+        const sith = { key: 'sith', ...FACTIONS.sith };
+        const plan = lane({ depth: -7, size: 130 });
+        const direction = random() < 0.5 ? -1 : 1;
+        const velocity = new THREE.Vector3(direction * (plan.x1 - plan.x0) * plan.perPx / 6.5, 0.02, 0);
+        const pursuers = [];
+        const hawk = spawn({
+          key: 'ebonHawk', side: HAWK, length: (view.narrow ? 70 : 130) * plan.perPx,
+          position: toWorld(direction < 0 ? plan.x1 : plan.x0, plan.y, plan.depth), velocity, heading: velocity.clone().setZ(0.2), windows: 0,
+          up: new THREE.Vector3(0, 1, 0.9),
+          label: 'Ebon Hawk ▸ Dynamic-class freighter · 24 m', contactClass: 'r3-contact--civil', hp: 6,
+          think(actor) {
+            actor.velocity.y = Math.sin(now() * 2.3) * 0.28 + Math.sin(now() * 5.1) * 0.08;
+            // A flat freighter, banked and turned to show its back, its prongs, to the viewer.
+            orient(actor.group, actor.velocity.clone().setZ(0.2), new THREE.Vector3(Math.sin(now() * 2.3) * 0.5, 1, 0.9));
+            const chaser = pursuers.find((one) => !one.dead && !one.gone && one.state === 'present');
+            if (chaser && actor.state === 'present' && now() >= (actor.data.nextShot || 0)) {
+              actor.data.nextShot = now() + 0.6 + random() * 0.5;
+              const aim = chaser.group.position.clone().sub(actor.group.position);
+              const distance = aim.length();
+              if (distance > 1e-3) bolt(actor.group.position, aim.divideScalar(distance), { speed: 30, length: 0.3, life: distance / 30, color: linear(HAWK.laser).multiplyScalar(3) });
+            }
+            if (actor.state === 'present' && actor.age > 7.5) depart(actor);
+          },
+        });
+        for (let i = 0; i < 2; i++) {
+          const pursuer = spawn({
+            key: 'fighter:sithFighter', side: sith, length: 0.5,
+            position: hawk.group.position.clone().add(new THREE.Vector3(-direction * (2.4 + i * 1.1), 0.5 - i * 0.9, 0.8)),
+            velocity: velocity.clone(), label: i === 0 ? `${sith.name} ▸ Sith fighters` : null, contactClass: 'r3-contact--hostile', windows: 0,
+            think(actor) {
+              if (actor.state !== 'present') return;
+              if (hawk.dead || hawk.gone) {
+                if (actor.age > 3) depart(actor);
+                return;
+              }
+              const aim = hawk.group.position.clone().sub(actor.group.position);
+              const distance = aim.length();
+              actor.velocity.lerp(aim.clone().normalize().multiplyScalar(velocity.length() * 1.15).add(new THREE.Vector3(0, Math.sin(now() * 3 + i) * 0.35, 0)), 0.05);
+              orient(actor.group, actor.velocity, new THREE.Vector3(0, 1, 0));
+              if (now() >= (actor.data.nextShot || 0) && distance < 6 && distance > 1e-3) {
+                actor.data.nextShot = now() + 0.3 + random() * 0.25;
+                bolt(actor.group.position, aim.divideScalar(distance), { speed: 30, length: 0.35, life: distance / 30, color: linear(sith.laser).multiplyScalar(3) });
+                if (random() < 0.25) emit(hawk.group.position, 6, 1, [0.2, 0.6], [0.01, 0.02], [0.3, 0.5]);
+              }
+              if (actor.age > 9) depart(actor);
+            },
+          });
+          pursuer.onKilled = () => memory?.record?.('kill', { faction: 'sith', capital: false });
+          pursuers.push(pursuer);
+        }
+        return { actors: [hawk], extra: pursuers };
+      },
+    },
     // A freighter drops out of hyperspace smoking, its beacon blinking, two battered fighters with
     // it. Left alone they limp across and jump on; that counts as a rescue.
     distress: {
@@ -690,12 +760,12 @@ export function createDirector({ kit, fleet = null, memory = null, random = kit.
       eligible: (context) => context.destroyed > 0 || scenario.war || random() < 0.35,
       start() {
         const side = pick(sides);
-        const [kind, label] = pick(side.capitals);
+        const [kind, label, shape] = pick(side.capitals);
         const size = view.narrow ? 110 : 280;
         const plan = lane({ depth: -9.5, size });
         const velocity = new THREE.Vector3((random() < 0.5 ? -1 : 1) * 0.05, -0.015, 0);
         const ship = spawn({
-          key: `capital:${kind}`, side, length: size * plan.perPx, position: toWorld((plan.x0 + plan.x1) / 2, plan.y + (view.narrow ? 0 : 20), plan.depth), velocity,
+          key: capitalKey(kind, shape), side, length: size * plan.perPx, position: toWorld((plan.x0 + plan.x1) / 2, plan.y + (view.narrow ? 0 : 20), plan.depth), velocity,
           heading: new THREE.Vector3(velocity.x < 0 ? -1 : 1, -0.1, 0.35), up: new THREE.Vector3(0.35, 1, 0.2), textured: true, haze: 0.1, char: 0.15, hyper: false,
           label: `${side.name} ▸ ${label} · disabled`, contactClass: 'r3-contact--derelict', hp: 5,
           tumble: { axis: new THREE.Vector3(0.2, 0.1, 1).normalize(), rate: 0.035 },
@@ -753,12 +823,12 @@ export function createDirector({ kit, fleet = null, memory = null, random = kit.
       eligible: (context) => context.vista === 'shipyard',
       start() {
         const side = sides[0];
-        const [kind, label] = pick(side.capitals);
+        const [kind, label, shape] = pick(side.capitals);
         const size = view.narrow ? 120 : 300;
         const plan = lane({ depth: -8, size });
         const velocity = new THREE.Vector3(0.09, 0.012, 0);
         const cruiser = spawn({
-          key: `capital:${kind}`, side, length: size * plan.perPx, position: toWorld(plan.x0 - size * 0.2, plan.y + 10, plan.depth), velocity,
+          key: capitalKey(kind, shape), side, length: size * plan.perPx, position: toWorld(plan.x0 - size * 0.2, plan.y + 10, plan.depth), velocity,
           heading: new THREE.Vector3(1, 0.03, 0.35), textured: true, haze: 0.05, hyper: false, label: `${side.name} ▸ new build · ${label}`, contactClass: 'r3-contact--civil', hp: 6,
           think(actor) {
             if (actor.age < 7) {
@@ -867,13 +937,13 @@ export function createDirector({ kit, fleet = null, memory = null, random = kit.
       eligible: (context) => context.destroyed > 0 || scenario.war,
       start() {
         const side = pick(Object.entries(FACTIONS).map(([key, value]) => ({ key, ...value })));
-        const [kind, label] = pick(side.capitals);
+        const [kind, label, shape] = pick(side.capitals);
         const size = view.narrow ? 160 : 420;
         const plan = lane({ depth: -13, size });
         const leftward = random() < 0.5;
         const speed = (view.width - plan.x0 + size) * plan.perPx / 28;
         const hulk = spawn({
-          key: `capital:${kind}`, side, length: size * plan.perPx, position: toWorld(leftward ? view.width + size * 0.35 : plan.x0 - size * 0.1, plan.y + 30, plan.depth),
+          key: capitalKey(kind, shape), side, length: size * plan.perPx, position: toWorld(leftward ? view.width + size * 0.35 : plan.x0 - size * 0.1, plan.y + 30, plan.depth),
           velocity: new THREE.Vector3(leftward ? -speed : speed, -speed * 0.08, 0), heading: new THREE.Vector3(1, 0.2, 0.4), textured: true, haze: 0.25, char: 0.7, hyper: false,
           label: `Wreck ▸ ${label}`, contactClass: 'r3-contact--derelict', hp: 8, tumble: { axis: new THREE.Vector3(0.3, 1, 0.4).normalize(), rate: 0.06 },
           think(actor) {

@@ -87,6 +87,7 @@ const SHIP_FRAGMENT = /* glsl */ `
   uniform float uWindows;
   uniform float uHaze;       // how far off it is: distance greys it toward the sky
   uniform float uTextured;   // 1 where the hull maps below dress the plating
+  uniform float uSelfLit;    // [r3:lore] a living hull's own faint light, a fraction of its colour
   uniform sampler2D uHullMap;    // plate colours
   uniform sampler2D uDetailMap;  // r: relief, g: lit ports
   uniform float uMapScale;
@@ -129,6 +130,13 @@ const SHIP_FRAGMENT = /* glsl */ `
     vec2 step2 = max(abs(mapDx) + abs(mapDy), vec2(1.0 / 2048.0));
     if (behindPlanet(vDepth)) discard;
 
+    // [r3:lore] Luminous paint, 8: a Gungan hull's bioluminescence and a Mantaris's wingtip knobs,
+    // glowing in the livery's paint and breathing slowly.
+    if (vKind > 7.5 && vKind < 8.5) {
+      float breath = 0.8 + 0.2 * sin(uTime * 1.7 + vObject.z * 23.0 + vObject.x * 11.0);
+      gl_FragColor = vec4(mix(uPaint * 2.4 * breath, vec3(2.4, 2.8, 3.4), uWarp) * uFade, 1.0);
+      return;
+    }
     if (vKind > 1.5 && vKind < 2.5) {
       float flicker = 0.85 + 0.15 * sin(uTime * 31.0 + vObject.x * 50.0 + vObject.y * 37.0);
       vec3 burn = uEngine * (2.6 + 4.0 * uBoost) * flicker;
@@ -142,7 +150,9 @@ const SHIP_FRAGMENT = /* glsl */ `
     float ports = 0.0;
     bool painted = vKind > 5.5 && vKind < 6.5;
     bool canopy = vKind > 4.5 && vKind < 5.5;
-    bool solar = vKind > 6.5;
+    bool solar = vKind > 6.5 && vKind < 7.5;
+    bool bubble = vKind > 8.5; // [r3:lore] a hydrostatic bubble, 9: clear water-blue, lit at its rim
+    bool glassy = canopy || bubble;
     if (painted) base = uPaint;
     if (uTextured > 0.5 && (vKind < 1.5 || (vKind > 2.5 && vKind < 3.5) || painted)) {
       // The painted plating: its colour, and its relief turned into a tilt of the normal, measured
@@ -167,6 +177,11 @@ const SHIP_FRAGMENT = /* glsl */ `
       base = mix(uHull, uPaint, step(0.2, r) * step(r, 0.27));
     }
     if (canopy) base = vec3(0.02, 0.025, 0.035);
+    if (bubble) {
+      base = vec3(0.02, 0.06, 0.075);
+      tone = 1.0;
+      seams = 0.0;
+    }
     // A solar panel: near black, ribbed, with a soft sheen rather than a canopy's hard glint.
     if (solar) {
       float ribs = seam(uv.y * 26.0, cellWidth.y * 26.0 / uPanels.y);
@@ -179,9 +194,12 @@ const SHIP_FRAGMENT = /* glsl */ `
     float sunLight = max(dot(n, uSunDir), 0.0);
     vec3 col = base * (uSunColor * sunLight * 0.95 + uAir * (0.07 + 0.2 * max(-n.y, 0.0)) + vec3(0.025, 0.03, 0.04));
     vec3 h = safeNormalize(uSunDir + v, n);
-    col += uSunColor * pow(max(dot(n, h), 0.0), canopy ? 160.0 : (solar ? 24.0 : 48.0)) * (canopy ? 2.0 : (solar ? 0.12 : 0.45)) * tone;
+    col += uSunColor * pow(max(dot(n, h), 0.0), glassy ? 160.0 : (solar ? 24.0 : 48.0)) * (glassy ? 2.0 : (solar ? 0.12 : 0.45)) * tone;
     float facing = max(dot(n, v), 0.0);
     col += uAir * pow(max(1.0 - facing, 0.0), 4.0) * 0.35;
+    // [r3:lore] A bubble's rim takes the drive's colour, and a lived-in one glows with lamplight within,
+    // as Otoh Gunga's do.
+    if (bubble) col += uEngine * (pow(max(1.0 - facing, 0.0), 2.5) * 0.9 + 0.04) + vec3(0.95, 0.72, 0.4) * (0.03 + 0.07 * facing) * uWindows;
     col += uSunColor * pow(max(1.0 - facing, 0.0), 3.0) * max(dot(-v, uSunDir), 0.0) * 0.9;
 
     col += vec3(1.0, 0.84, 0.58) * ports * 2.6 * uWindows;
@@ -195,6 +213,7 @@ const SHIP_FRAGMENT = /* glsl */ `
       col += vec3(1.0, 0.86, 0.62) * port * row * step(0.72, hash21(floor(w))) * 1.8 * uWindows;
     }
 
+    col += base * uSelfLit * (painted || canopy || bubble ? 0.0 : 1.0); // [r3:lore]
     col = mix(col, uAir * 0.12 + vec3(0.01, 0.015, 0.02), uHaze);
     col = mix(col, vec3(2.2, 2.6, 3.2), uWarp);
     gl_FragColor = vec4(col * uFade, 1.0);
@@ -342,6 +361,52 @@ const BOLT_VERTEX = /* glsl */ `
     vec4 view = modelViewMatrix * vec4(position, 1.0);
     vDepth = -view.z;
     gl_Position = projectionMatrix * view;
+  }
+`;
+
+// [r3:lore] Boomas: the Gungans' plasma, thrown as balls rather than fired as bolts. Each is a
+// sprite of its own size, a white core in a ball of the livery's colour with filaments crackling
+// round it.
+const BOOMA_VERTEX = /* glsl */ `
+  attribute float aAlpha;
+  attribute float aSize;     // world units
+  attribute vec3 aColor;
+  uniform float uScale;      // device pixels per world unit at a distance of one
+  uniform float uTime;
+  varying float vAlpha;
+  varying vec3 vColor;
+  varying float vDepth;
+  varying float vSeed;
+  void main() {
+    vAlpha = aAlpha;
+    vColor = aColor;
+    vSeed = fract(float(gl_VertexID) * 0.618);
+    vec4 view = modelViewMatrix * vec4(position, 1.0);
+    vDepth = -view.z;
+    gl_Position = projectionMatrix * view;
+    float wobble = 0.9 + 0.1 * sin(uTime * 23.0 + vSeed * 40.0);
+    gl_PointSize = aAlpha > 0.0 ? min(aSize * wobble * uScale / max(-view.z, 0.1), 96.0) : 0.0;
+  }
+`;
+
+const BOOMA_FRAGMENT = /* glsl */ `
+  uniform float uTime;
+  varying float vAlpha;
+  varying vec3 vColor;
+  varying float vDepth;
+  varying float vSeed;
+  ${PLANET}
+  void main() {
+    if (behindPlanet(vDepth)) discard;
+    vec2 d = gl_PointCoord - 0.5;
+    float r = length(d) * 2.0;
+    if (r > 1.0) discard;
+    float angle = atan(d.y, d.x + 1e-4); // never atan(0, 0), undefined at the exact centre
+    float body = 1.0 - smoothstep(0.35, 1.0, r);
+    float core = exp(-r * r * 22.0);
+    float strands = pow(max(0.5 + 0.5 * sin(angle * 7.0 + uTime * 9.0 + vSeed * 20.0 + r * 9.0), 0.0), 10.0) * (1.0 - smoothstep(0.25, 0.95, r));
+    vec3 col = vColor * (body * 0.9 + strands * 0.9) + vec3(1.0) * core * 1.6;
+    gl_FragColor = vec4(col * vAlpha, 1.0);
   }
 `;
 
@@ -515,6 +580,8 @@ const SHIELD_FRAGMENT = /* glsl */ `
   uniform vec3 uColor;
   uniform vec3 uCamera;
   uniform float uFailing;
+  uniform float uBubble;     // [r3:lore] 1: a Gungan hydrostatic membrane rather than a hex lattice
+  uniform float uTime;
   varying vec3 vLocal;
   varying vec3 vLocalNormal;
   varying vec3 vWorld;
@@ -552,6 +619,13 @@ const SHIELD_FRAGMENT = /* glsl */ `
     float cells = hexEdge(lattice.yz) * facing.x + hexEdge(lattice.xz) * facing.y + hexEdge(lattice.xy) * facing.z;
     float tear = uFailing > 0.5 ? step(0.5, fract(sin(dot(floor(lattice.xy * 0.5 + lattice.z * 0.3), vec2(12.9898, 78.233))) * 43758.5453)) : 1.0;
     vec3 col = uColor * glow * (0.35 + 0.9 * cells) * (0.6 + 0.4 * rim) * tear;
+    // [r3:lore] A hydrostatic bubble is always faintly there: a water-bright membrane, brightest at
+    // its rim, with a slow sheen crossing it. It flares where it is hit, and is gone when it fails.
+    if (uBubble > 0.5) {
+      float sheen = 0.5 + 0.5 * sin(dot(vLocal, vec3(23.0, 17.0, 31.0)) + uTime * 1.3);
+      float membrane = rim * (0.28 + 0.22 * sheen) * (1.0 - uFailing);
+      col = mix(uColor, vec3(0.55, 1.0, 1.1), 0.35) * (membrane * 0.5 + glow * 1.15);
+    }
     gl_FragColor = vec4(col, 1.0);
   }
 `;
@@ -568,7 +642,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     owned.push(object);
     return object;
   }
-  const shipMaterial = (side, { textured = false, panels = 22, windows = 1, haze = 0 } = {}) => new THREE.ShaderMaterial({
+  const shipMaterial = (side, { textured = false, panels = 22, windows = 1, haze = 0, selfLit = 0 } = {}) => new THREE.ShaderMaterial({
     vertexShader: SHIP_VERTEX,
     fragmentShader: SHIP_FRAGMENT,
     uniforms: {
@@ -587,6 +661,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
       uWindows: { value: windows },
       uHaze: { value: haze },
       uTextured: { value: textured ? 1 : 0 },
+      uSelfLit: { value: selfLit }, // [r3:lore]
       uHullMap: { value: hullMap },
       uDetailMap: { value: detailMap },
       uMapScale: { value: 2.4 },
@@ -641,8 +716,12 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     const centre = bounds.getCenter(new THREE.Vector3());
     const half = bounds.getSize(new THREE.Vector3()).multiplyScalar(0.5);
     half.set(Math.max(half.x, 0.03), Math.max(half.y, 0.03), Math.max(half.z, 0.03));
+    // [r3:lore] A hydrostatic bubble is rounder than a flat hull: never under half as tall or wide as it is long.
+    if (side.shield === 'bubble') half.set(Math.max(half.x, half.z * 0.5), Math.max(half.y, half.z * 0.42), half.z);
     for (const sample of samples) sample.sub(centre).divide(half);
+    const bubble = side.shield === 'bubble'; // [r3:lore] one smooth ellipsoid round the whole hull
     const reachToward = (direction) => {
+      if (bubble) return 1.22;
       let furthest = 0.05;
       for (const sample of samples) furthest = Math.max(furthest, sample.dot(direction));
       return furthest;
@@ -675,6 +754,8 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
       uColor: { value: linear(side.engine).lerp(new THREE.Color(1, 1, 1), 0.25).multiplyScalar(1.6) },
       uCamera: { value: camera.position },
       uFailing: { value: 0 },
+      uBubble: { value: bubble ? 1 : 0 }, // [r3:lore]
+      uTime: time,
       ...planetUniforms,
     };
     const mesh = new THREE.Mesh(geometry, new THREE.ShaderMaterial({
@@ -693,11 +774,13 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
   // Capital ships: one of each hull the sides fly, built once, each with its shield.
   const capitals = [];
   for (const side of sides) {
-    for (const [kind, label] of side.capitals) {
-      let ship = capitals.find((entry) => entry.side === side && entry.kind === kind);
+    for (const [kind, label, shape] of side.capitals) {
+      // [r3:lore] One model per hull and shape: a Venator and an Acclamator are both wedges.
+      const variant = shape ? JSON.stringify(shape) : '';
+      let ship = capitals.find((entry) => entry.side === side && entry.kind === kind && entry.variant === variant);
       if (!ship) {
-        const design = buildCapital(kind, random);
-        const material = shipMaterial(side, { textured: true, panels: 30, haze: 0.1 });
+        const design = buildCapital(kind, random, shape);
+        const material = shipMaterial(side, { textured: true, panels: 30, haze: 0.1, ...side.material });
         const mesh = new THREE.Mesh(design.geometry, material);
         mesh.frustumCulled = false;
         const group = new THREE.Group();
@@ -708,7 +791,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
         group.add(shield.mesh);
         group.visible = false;
         own(group);
-        ship = { side, kind, design, material, group, lights, shield, labels: [] };
+        ship = { side, kind, variant, design, material, group, lights, shield, labels: [] };
         capitals.push(ship);
       }
       ship.labels.push(label);
@@ -724,7 +807,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
       const design = fighterDesigns.get(kind);
       // [r3:memory] A furious navy flies its fighters in fours.
       pools.set(`${side.key}:${kind}`, (side.stance === 'furious' ? [0, 1, 2, 3] : [0, 1]).map(() => {
-        const material = shipMaterial(side, { windows: 0 });
+        const material = shipMaterial(side, { windows: 0, ...side.fighterMaterial }); // [r3:lore]
         const mesh = new THREE.Mesh(design.geometry, material);
         mesh.frustumCulled = false;
         const group = new THREE.Group();
@@ -775,16 +858,43 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
   }));
   boltLines.frustumCulled = false;
   own(boltLines);
+  // [r3:lore] Boomas, one sprite for each bolt, shown only for a bolt thrown as a booma.
+  const boomaGeometry = new THREE.BufferGeometry();
+  boomaGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(BOLTS * 3), 3));
+  boomaGeometry.setAttribute('aAlpha', new THREE.BufferAttribute(new Float32Array(BOLTS), 1));
+  boomaGeometry.setAttribute('aSize', new THREE.BufferAttribute(new Float32Array(BOLTS), 1));
+  boomaGeometry.setAttribute('aColor', new THREE.BufferAttribute(new Float32Array(BOLTS * 3), 3));
+  const boomaUniforms = { uScale: { value: 1 }, uTime: time, ...planetUniforms };
+  const boomaPoints = new THREE.Points(boomaGeometry, new THREE.ShaderMaterial({
+    vertexShader: BOOMA_VERTEX,
+    fragmentShader: BOOMA_FRAGMENT,
+    uniforms: boomaUniforms,
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  }));
+  boomaPoints.frustumCulled = false;
+  own(boomaPoints);
   const bolts = Array.from({ length: BOLTS }, () => ({ age: Infinity, life: 0.5, speed: 48, length: 0.5, position: new THREE.Vector3(), direction: new THREE.Vector3(), color: new THREE.Color(), target: null, aimed: new THREE.Vector3() }));
   // aimed: for a turbolaser, the spot on its target's hull it was fired at, in the hull's own
   // coordinates, so the hit lands there however far the ship has moved.
   let nextBolt = 0;
-  function bolt(from, direction, { speed, length, life, color, target = null, aimed = null }) {
+  // [r3:lore] style 'booma': thrown slower (unless the caller already slowed it for a target), drawn
+  // as a ball the size of a fifth of the length a bolt would have had, but never smaller than a
+  // fighter's.
+  const BOOMA_SLOW = 0.42;
+  function bolt(from, direction, { speed, length, life, color, target = null, aimed = null, style = null }) {
     const shot = bolts[nextBolt];
     nextBolt = (nextBolt + 1) % BOLTS;
     shot.age = 0;
     shot.position.copy(from);
     shot.direction.copy(direction);
+    shot.style = style;
+    if (style === 'booma' && !target) {
+      speed *= BOOMA_SLOW;
+      life /= BOOMA_SLOW;
+    }
+    shot.size = Math.max(length * 0.45, 0.14);
     shot.speed = speed;
     shot.length = length;
     shot.life = life;
@@ -1000,6 +1110,9 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
       y = THREE.MathUtils.clamp(height * (0.22 + 0.16 * random()), lengthPx * 0.32 + 12, height * 0.55);
       depth = -7 - random() * 4;
     }
+    // [r3:lore] A hydrostatic bubble, and the flat hull tilted inside it, stands taller than a hull:
+    // keep half the length clear above it.
+    if (side.shield === 'bubble') y = Math.max(y, lengthPx * 0.5 + 12);
     // [r3:memory] A navy with a grudge drops in nearer.
     if (side.stance === 'hostile' || side.stance === 'furious') depth = Math.min(-4.5, depth + 1.8);
     worldAt(x, y, depth, visit.start);
@@ -1011,7 +1124,8 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     visit.heading.copy(visit.velocity).normalize();
     visit.heading.z += 0.25;
     visit.heading.normalize();
-    visit.up.set((random() - 0.5) * 0.3, 1, 0.3).normalize();
+    // [r3:lore] A flat hull, a manta's, turns its back further toward the viewer, or it is a plank.
+    visit.up.set((random() - 0.5) * 0.3, 1, 0.3 + (visit.ship.design.tilt || 0)).normalize();
     visit.shield = 0.8 + 0.5 * random();
     visit.hull = 0;
     visit.blasts = 0;
@@ -1167,6 +1281,8 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     const count = 3 + Math.floor(random() * 3) - 2 * from.systems.weapons; // [r3:gunnery] fewer with weapons hit
     if (count <= 0) return;
     const laser = linear(from.ship.side.laser).multiplyScalar(1.4);
+    const style = from.ship.side.bolt || null; // [r3:lore] boomas are slower, so led for their own speed
+    const slow = style === 'booma' ? BOOMA_SLOW : 1;
     from.ship.group.updateMatrixWorld(true);
     to.ship.group.updateMatrixWorld(true);
     for (let i = 0; i < count; i++) {
@@ -1177,7 +1293,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
       const corner = to.ship.design.extremes[Math.floor(random() * to.ship.design.extremes.length)];
       const spot = corner.clone().multiplyScalar(0.25 + 0.5 * random());
       const end = spot.clone().applyMatrix4(to.ship.group.matrixWorld);
-      const speed = Math.max(from.length, to.length) * (1.5 + 0.6 * random());
+      const speed = Math.max(from.length, to.length) * (1.5 + 0.6 * random()) * slow;
       let flight = start.distanceTo(end) / speed;
       for (let round = 0; round < 2; round++) {
         const ahead = spot.clone().applyMatrix4(to.ship.group.matrixWorld).addScaledVector(to.velocity, flight + delay);
@@ -1190,7 +1306,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
       const distance = aim.length();
       if (distance < 1e-3) continue;
       aim.divideScalar(distance);
-      const shot = bolt(start, aim, { speed, length: from.length * 0.14, life: wide ? distance / speed + 1.5 : distance / speed, color: laser, target: wide ? null : to, aimed: spot });
+      const shot = bolt(start, aim, { speed, length: from.length * 0.14, life: wide ? distance / speed + 1.5 : distance / speed, color: laser, target: wide ? null : to, aimed: spot, style });
       shot.age = -delay;
     }
   }
@@ -1556,7 +1672,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
         aim.x += (random() - 0.5) * 0.06;
         aim.y += (random() - 0.5) * 0.06;
         aim.normalize();
-        const shot = bolt(localPoint, aim, { speed: 26, length: visit.length * 0.12, life: distance / 26 + 0.4, color: linear(visit.ship.side.laser) });
+        const shot = bolt(localPoint, aim, { speed: 26, length: visit.length * 0.12, life: distance / 26 + 0.4, color: linear(visit.ship.side.laser), style: visit.ship.side.bolt || null });
         shot.age = -i * 0.12;
       }
       incoming.push(clock + distanceTo(visit) / 26 + 0.1);
@@ -1626,7 +1742,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     aim.normalize();
     aim.x += (random() - 0.5) * 0.05;
     aim.y += (random() - 0.5) * 0.05;
-    bolt(start, aim.normalize(), { speed: 48, length: 0.5, life: 0.5, color: linear(fighter.side.laser) });
+    bolt(start, aim.normalize(), { speed: 48, length: 0.5, life: 0.5, color: linear(fighter.side.laser), style: fighter.side.bolt || null });
   }
 
   // [r3:memory] A fighter's shot at a point: the viewer's jewel, a little off.
@@ -1642,7 +1758,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     aim.x += (random() - 0.5) * 0.08;
     aim.y += (random() - 0.5) * 0.08;
     aim.normalize();
-    bolt(start, aim, { speed: 48, length: 0.5, life: 0.6, color: linear(fighter.side.laser) });
+    bolt(start, aim, { speed: 48, length: 0.5, life: 0.6, color: linear(fighter.side.laser), style: fighter.side.bolt || null });
     const reach = start.distanceTo(point);
     if (struck && reach < 48 * 0.6) struck(aim, reach / 48); // [r3:qa] it lands inside the bolt's life
   }
@@ -1651,6 +1767,11 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     const positions = boltGeometry.getAttribute('position');
     const alphas = boltGeometry.getAttribute('aAlpha');
     const colors = boltGeometry.getAttribute('aColor');
+    const boomaPositions = boomaGeometry.getAttribute('position'); // [r3:lore]
+    const boomaAlphas = boomaGeometry.getAttribute('aAlpha');
+    const boomaSizes = boomaGeometry.getAttribute('aSize');
+    const boomaColors = boomaGeometry.getAttribute('aColor');
+    boomaUniforms.uScale.value = particleUniforms.uScale.value;
     bolts.forEach((shot, i) => {
       const before = shot.age;
       shot.age += dt;
@@ -1665,14 +1786,24 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
       positions.setXYZ(i * 2, shot.position.x, shot.position.y, shot.position.z);
       positions.setXYZ(i * 2 + 1, tail.x, tail.y, tail.z);
       const alpha = alive ? Math.min(1, 1.6 * (1 - shot.age / shot.life)) : 0;
-      alphas.setX(i * 2, alpha);
-      alphas.setX(i * 2 + 1, alpha * 0.35);
+      // [r3:lore] A booma is a ball, not a line.
+      const booma = shot.style === 'booma';
+      boomaPositions.setXYZ(i, shot.position.x, shot.position.y, shot.position.z);
+      boomaAlphas.setX(i, booma && alive ? Math.min(1, 3 * (1 - shot.age / shot.life)) : 0);
+      boomaSizes.setX(i, shot.size || 0);
+      boomaColors.setXYZ(i, shot.color.r, shot.color.g, shot.color.b);
+      alphas.setX(i * 2, booma ? 0 : alpha);
+      alphas.setX(i * 2 + 1, booma ? 0 : alpha * 0.35);
       colors.setXYZ(i * 2, shot.color.r, shot.color.g, shot.color.b);
       colors.setXYZ(i * 2 + 1, shot.color.r, shot.color.g, shot.color.b);
     });
     positions.needsUpdate = true;
     alphas.needsUpdate = true;
     colors.needsUpdate = true;
+    boomaPositions.needsUpdate = true;
+    boomaAlphas.needsUpdate = true;
+    boomaSizes.needsUpdate = true;
+    boomaColors.needsUpdate = true;
   }
 
   const velocities = new Map();
