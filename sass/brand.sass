@@ -166,6 +166,34 @@
   @media (forced-colors: active)
     display: none
 
+// [r3:director] The encounters' contacts, by what they are: a distress call blinks red, a bounty is
+// gold, civilians are pale, raiders and probes hostile, derelicts dim.
+.r3-contact--distress
+  color: #ff7a6a
+  animation: r3-distress 1.25s steps(2, jump-none) infinite
+
+.r3-contact--bounty
+  color: #f2c14e
+
+.r3-contact--civil
+  color: color-mix(in oklab, #d8e2ea 80%, transparent)
+
+.r3-contact--hostile
+  color: #ff5a4a
+
+.r3-contact--derelict
+  color: color-mix(in oklab, #a8a39a 70%, transparent)
+
+@keyframes r3-distress
+  0%
+    filter: none
+  100%
+    filter: brightness(.45)
+
+@media (prefers-reduced-motion: reduce)
+  .r3-contact--distress
+    animation: none
+
 .r3-contact__label
   position: absolute
   top: 100%

@@ -30,6 +30,7 @@ import * as THREE from './vendor/three.module.min.js';
 import { pickWorld, WORLDS } from './r3-worlds.js';
 import { pickVista, placeVista, VISTA_GLSL } from './r3-vistas.js';
 import { createFleet } from './r3-ships.js';
+import { createDirector } from './r3-events.js'; // [r3:director]
 import { pickScenario } from './r3-shipyard.js';
 
 const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -1070,6 +1071,9 @@ function start(hero, art) {
   }));
   pivot.add(jewel);
   let fleet = createFleet({ scene, camera, time, sunDir, sunColor, air, reduceMotion, overlay: art || hero, anisotropy: renderer.capabilities.getMaxAnisotropy(), random: world.random });
+  // [r3:director] rare encounters, built from the fleet's kit. The integrator wires memory in.
+  let director = createDirector({ kit: fleet.kit, fleet, memory: null, random: world.random });
+  director.onArrive({ world: world.name, vista: vista.kind });
 
   const brightMaterial = fullscreenMaterial(BRIGHT_FRAGMENT, { tInput: { value: sceneTarget.texture }, uThreshold: { value: 1.1 } });
   const blurMaterial = fullscreenMaterial(BLUR_FRAGMENT, { tInput: { value: null }, uDirection: { value: new THREE.Vector2() } });
@@ -1302,6 +1306,11 @@ function start(hero, art) {
       requestFrame();
       return;
     }
+    if (director.shoot(event.clientX - bounds.left, event.clientY - bounds.top)) { // [r3:director]
+      event.r3Taken = true;
+      requestFrame();
+      return;
+    }
     if (vista.kind === 'heatDeath' && !vista.bang && !jump.active) {
       event.r3Taken = true;
       vista.bang = { x: event.clientX - bounds.left, y: event.clientY - bounds.top, born: time.value };
@@ -1414,7 +1423,7 @@ function start(hero, art) {
       const point = heroPoint(event);
       const onLink = event.target.closest(interactive) || event.target.closest('.r3-survey') || overText(point);
       const body = onLink ? null : systemWorldAt(point);
-      hero.style.cursor = onLink ? '' : fleet.aimed(point.x, point.y) ? 'crosshair' : body || overJewel(point) ? 'pointer' : overPlanet(point) ? 'grab' : '';
+      hero.style.cursor = onLink ? '' : fleet.aimed(point.x, point.y) || director.aimed(point.x, point.y) /* [r3:director] */ ? 'crosshair' : body || overJewel(point) ? 'pointer' : overPlanet(point) ? 'grab' : '';
       waypoint.classList.toggle('is-shown', !!body);
       if (body) {
         waypoint.textContent = `${body.world.name} ⟫`;
@@ -1666,6 +1675,7 @@ function start(hero, art) {
     // The ships, and any hyperspace flash they make. They hide behind the planet where the sky
     // draws it.
     fleet.planet((planet.x - drift.value.x * 26) * ratio, (planet.y - drift.value.y * 26) * ratio, planet.radius * ratio);
+    director.update(reduceMotion ? 0 : dt); // [r3:director]
     const shipFlash = fleet.update(reduceMotion ? 0 : dt);
     // An explosion shakes the camera for a moment.
     if (shipFlash.shake > 0) {
@@ -1814,6 +1824,7 @@ function start(hero, art) {
     jump.swapped = false;
     chooseDestination();
     fleet.leave();
+    director.onDepart(); // [r3:director]
     requestFrame();
   }
   // Where the jump goes, picked as it begins, so the sky for it can compile in the background
@@ -1853,6 +1864,9 @@ function start(hero, art) {
       requestAnimationFrame(() => warm.material.dispose());
     }
     fleet = createFleet({ scene, camera, time, sunDir, sunColor, air, reduceMotion, overlay: art || hero, anisotropy: renderer.capabilities.getMaxAnisotropy(), random: world.random, scenario: pickScenario(world.random, { fresh: true }) });
+    director.dispose(); // [r3:director] the old one's ships went with the old fleet
+    director = createDirector({ kit: fleet.kit, fleet, memory: null, random: world.random });
+    director.onArrive({ world: world.name, vista: vista.kind });
     if (vista.kind === 'heatDeath') fleet.leave();
     starPlaced = true;
     layout();
@@ -1894,7 +1908,7 @@ function start(hero, art) {
     const bounds = hero.getBoundingClientRect();
     const point = { x: event.clientX - bounds.left, y: event.clientY - bounds.top };
     if (event.button > 0 || event.target.closest('a, button, input, summary, [role="button"], .r3-survey') || overText(point)) return;
-    if (fleet.aimed(point.x, point.y) || overJewel(point) || overPlanet(point) || systemWorldAt(point)) return;
+    if (fleet.aimed(point.x, point.y) || director.aimed(point.x, point.y) /* [r3:director] */ || overJewel(point) || overPlanet(point) || systemWorldAt(point)) return;
     beginJump();
   });
   applyWorld(world);
