@@ -920,6 +920,16 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     contact.element.style.width = `${(right - left + pad * 2).toFixed(1)}px`;
     contact.element.style.height = `${(bottom - top + pad * 2).toFixed(1)}px`;
     contact.element.classList.add('is-locked');
+    // [r3:stage] The readout under the brackets stays on the stage: where it would run off the
+    // right edge it moves left of them, and never left of the stage. Its width is estimated from
+    // the label's length (about 7px a character), so nothing is measured each frame.
+    const boxLeft = left - pad;
+    const textWidth = contact.label.textContent.length * 7.2 + 12;
+    const shift = Math.round(Math.max(8 - boxLeft, Math.min(0, view.width - 8 - textWidth - boxLeft)));
+    if (shift !== contact.shift) {
+      contact.shift = shift;
+      contact.element.style.setProperty('--r3-text-x', `${shift}px`);
+    }
     return { left, top, right, bottom };
   }
 

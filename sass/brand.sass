@@ -616,3 +616,13 @@ $r3-inset: max(var(--dw-gutter), calc((100% - var(--dw-width-page)) / 2 + var(--
   @media (max-width: 760px)
     &::after
       clip-path: inset(0 0 55rem 0)
+
+// [r3:stage] Every line under a contact's brackets shares one shift (static/js/r3-ships.js), so the
+// readout stays on the stage when the ship is near its right edge.
+.r3-contact__label,
+.r3-contact__status,
+.r3-contact__systems,
+.r3-contact__sensor,
+.r3-contact__weather,
+.r3-contact__hail
+  left: var(--r3-text-x, 0px)
