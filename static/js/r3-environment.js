@@ -177,8 +177,8 @@ export function createEnvironment({ sky, composite, sunDir, sunColor, reduceMoti
 
       // A flare: the scene overexposes for a moment; the hulls take it hardest.
       const white = updateFlare(dt);
-      if (!jumping) composite.uWhite.value = white * 0.7;
-      shipColor.multiplyScalar(1 + white * 3.5);
+      if (!jumping) composite.uWhite.value = white * 0.32;
+      shipColor.multiplyScalar(1 + white * 4.5);
 
       // A black hole: bolts and fighters bend toward it, harder than the sky suggests, so it reads.
       bendStrength = 0;
