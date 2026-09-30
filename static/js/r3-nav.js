@@ -72,6 +72,7 @@ export function createNav({ stage, survey, jumpTo, live = () => ({}), reduceMoti
       if (Number.isFinite(recipe.vseed)) query.set('vseed', String(recipe.vseed));
       if (recipe.frame) query.set('frame', recipe.frame);
       if (recipe.sides && recipe.sides[0]) query.set('fleet', recipe.sides[0]);
+      if (recipe.war && recipe.sides && recipe.sides[1]) query.set('foe', recipe.sides[1]);
       query.set('war', recipe.war ? '1' : '0');
       if (recipe.ship) query.set('ship', recipe.ship);
       if (recipe.pass) query.set('pass', recipe.pass);

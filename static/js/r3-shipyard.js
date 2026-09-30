@@ -394,7 +394,12 @@ export const ERAS = [['rebels', 'empire'], ['republic', 'separatists'], ['resist
 // fighters meet in dogfights. After a jump the address no longer counts (fresh).
 export function pickScenario(random, { fresh = false } = {}) {
   const query = new URLSearchParams(fresh ? '' : location.search);
-  const eraIndex = ERAS.findIndex(([a, b]) => a === query.get('fleet') || b === query.get('fleet'));
+  // [r3:chart] ?foe= names the second side, where a side fights in more than one era (the
+  // Separatists, against the Republic or the Gungans).
+  const fleet = query.get('fleet');
+  const foe = query.get('foe');
+  const both = ERAS.findIndex(([a, b]) => (a === fleet && b === foe) || (b === fleet && a === foe));
+  const eraIndex = both >= 0 ? both : ERAS.findIndex(([a, b]) => a === fleet || b === fleet);
   // [r3:chart] All three rolls are drawn, forced or not, so a permalink's fleet leaves the rest of the
   // load's sequence where the visit had it. Unforced, the order is the same as before.
   const eraRoll = random();
