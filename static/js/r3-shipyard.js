@@ -13,7 +13,7 @@
 // patrol or the two at war, so the same few primitives make many different skies.
 
 import * as THREE from './vendor/three.module.min.js';
-import { arc170, interdictor, sithFighter } from './r3-shipyard-lore.js'; // [r3:lore]
+import { arc170, interdictor, mantaris, sithFighter, starbongo, warBongo } from './r3-shipyard-lore.js'; // [r3:lore]
 
 // Geometry --------------------------------------------------------------------------------------
 
@@ -253,7 +253,7 @@ function hammerhead(random) {
   };
 }
 
-const CAPITALS = { wedge, ringAndCore, organicCruiser, hammerhead, interdictor }; // [r3:lore] interdictor
+const CAPITALS = { wedge, ringAndCore, organicCruiser, hammerhead, interdictor, mantaris, warBongo }; // [r3:lore] the last three
 
 // [r3:lore] options: a side's proportions for this hull (FACTIONS[side].shapes[kind]).
 export function buildCapital(kind, random, options = undefined) {
@@ -344,7 +344,7 @@ function trifighter() {
   return { geometry: merge(parts), engines: [[0, 0, -0.13]], cannons: tips };
 }
 
-const FIGHTERS = { xwing, tie, awing, trifighter, arc170, sithFighter }; // [r3:lore] the last two
+const FIGHTERS = { xwing, tie, awing, trifighter, arc170, sithFighter, starbongo }; // [r3:lore] the last three
 
 export function buildFighter(kind) {
   return FIGHTERS[kind]();
@@ -374,11 +374,17 @@ export const FACTIONS = {
     capitals: [['hammerhead', 'Hammerhead-class · 315 m'], ['hammerhead', 'Endar Spire · Hammerhead-class · 315 m']] },
   sith: { name: 'Sith Empire', hull: '#3e3a40', paint: '#8a1a1a', engine: '#ff6a4a', laser: '#ff3a3a', fighters: ['sithFighter'],
     capitals: [['interdictor', 'Leviathan · Interdictor-class · 600 m'], ['interdictor', 'Interdictor-class · 600 m']] },
+  // The Gungan Grand Army took to space alongside the Republic: the Mantaris is Legends; the war
+  // bongo, the fighters and the armada's name are this site's extrapolation. Boomas, not lasers; a
+  // hydrostatic bubble for a shield; coral hulls, not plating.
+  gungan: { name: 'Gungan Grand Armada', hull: '#b98f5c', paint: '#b8402c', engine: '#5ad8ff', laser: '#7fe6ff', bolt: 'booma', shield: 'bubble',
+    material: { textured: false, panels: 2.5, windows: 0.7 }, fighterMaterial: { panels: 2 }, fighters: ['starbongo'],
+    capitals: [['mantaris', 'Mantaris-class · 98 m'], ['warBongo', 'Bombad-class war bongo · 410 m']] },
 };
 
 // An era's two sides.
 // [r3:memory] Exported for r3-memory.js's steering.
-export const ERAS = [['rebels', 'empire'], ['republic', 'separatists'], ['resistance', 'firstOrder'], ['oldRepublic', 'sith']];
+export const ERAS = [['rebels', 'empire'], ['republic', 'separatists'], ['resistance', 'firstOrder'], ['oldRepublic', 'sith'], ['gungan', 'separatists']]; // [r3:lore] Gungans fought the Separatists (The Clone Wars, "Shadow Warrior")
 
 // This load's scenario: one side on patrol, or two sides at war, when the capital ships fight and the
 // fighters meet in dogfights. After a jump the address no longer counts (fresh).

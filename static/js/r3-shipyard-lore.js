@@ -124,6 +124,94 @@ export function interdictor(random) {
   };
 }
 
+// The Mantaris-class amphibious medium transport, "the Ray", built by the Naboo and the Gungans
+// together on a bongo's frame (Legends): 98 m, a manta ray with flat swept wings, two sabre-like
+// tails (heat-sink finials, 30 m, a little under a third of its length), knobs at the wingtips that
+// shine red, and horn-like fins at the bow that are its twin concussion-missile launchers. Its
+// cockpit bubbles follow the tribubble bongo it grew from.
+export function mantaris() {
+  const parts = [];
+  const wing = [[0.06, 0.43], [0.16, 0.34], [0.29, 0.18], [0.39, 0.05], [0.44, -0.02], [0.37, -0.045], [0.24, -0.075], [0.12, -0.135], [0.05, -0.19], [0, -0.2]];
+  parts.push({ geometry: planform(wing, { nose: 0.44, depth: 0.018, bevel: 0.014 }), kind: 0 });
+  parts.push({ geometry: new THREE.SphereGeometry(0.5, 36, 20), matrix: at(0, 0.018, 0.1).multiply(scaled(0.2, 0.075, 0.62)), kind: 0 });
+  parts.push({ geometry: new THREE.SphereGeometry(0.5, 28, 16), matrix: at(0, -0.02, 0.08).multiply(scaled(0.16, 0.05, 0.5)), kind: 0 });
+  // Cockpit bubbles at the head, as on a bongo.
+  parts.push(sphere(0.034, 0, 0.05, 0.3, 9));
+  parts.push(sphere(0.024, -0.046, 0.038, 0.26, 9));
+  parts.push(sphere(0.024, 0.046, 0.038, 0.26, 9));
+  // Luminous markings down the back.
+  for (let i = 0; i < 5; i++) parts.push({ geometry: new THREE.SphereGeometry(0.5, 12, 8), matrix: at(0, 0.054 - i * 0.003, 0.18 - i * 0.075).multiply(scaled(0.022, 0.008, 0.03)), kind: 8 });
+  // The bow horns: twin concussion-missile launchers.
+  for (const side of [-1, 1]) {
+    parts.push({ geometry: new THREE.ConeGeometry(0.017, 0.11, 14), matrix: at(side * 0.075, 0.006, 0.47).multiply(turnY(side * 0.18)).multiply(along), kind: 1 });
+    // The tails: long, thin, a little apart.
+    parts.push({ geometry: new THREE.CylinderGeometry(0.004, 0.012, 0.32, 10), matrix: at(side * 0.036, 0.004, -0.34).multiply(turnY(side * 0.05)).multiply(along), kind: 0 });
+    // The knobs at the wingtips.
+    parts.push(sphere(0.014, side * 0.44, 0.004, -0.02, 8, 14));
+    // Engines under the tail root, and the electromotive stabilizers under the wings.
+    parts.push({ geometry: new THREE.CylinderGeometry(0.02, 0.024, 0.06, 16), matrix: at(side * 0.04, 0.01, -0.18).multiply(along), kind: 1 });
+    parts.push({ geometry: new THREE.CircleGeometry(0.017, 16), matrix: at(side * 0.04, 0.01, -0.2105).multiply(facingBack), kind: 2 });
+    parts.push({ geometry: new THREE.BoxGeometry(0.008, 0.03, 0.09), matrix: at(side * 0.12, -0.03, 0.0), kind: 1 });
+  }
+  return {
+    geometry: merge(parts),
+    extremes: v3([[0, 0, 0.52], [-0.45, 0, -0.02], [0.45, 0, -0.02], [0, 0.085, 0.3], [-0.05, 0, -0.5], [0.05, 0, -0.5], [0, -0.05, 0.08]]),
+    lights: [[-0.44, 0.012, -0.02], [0.44, 0.012, -0.02], [0, 0.085, 0.3]],
+  };
+}
+
+// A Gungan capital ship, which no source describes: a war bongo grown to 410 m, the "big bongo" of
+// the Mantaris taken further. A coral hull with swept fins and a bow driving plane; a tribubble
+// bridge; the back crowded with hydrostatic bubbles like Otoh Gunga's, where the crew live dry;
+// cradles of booma plasma along the fins for its catapults; and a crown of electromotive tentacles
+// astern that spin for propulsion, as a bongo's do. Its whole hull sits in one hydrostatic bubble,
+// the shield (r3-ships.js draws it for a side whose `shield` is 'bubble').
+export function warBongo(random) {
+  const parts = [];
+  parts.push({ geometry: new THREE.SphereGeometry(0.5, 44, 26), matrix: at(0, 0, 0.06).multiply(scaled(0.36, 0.16, 0.76)), kind: 0 });
+  const fins = [[0.14, 0.3], [0.3, 0.12], [0.41, -0.06], [0.43, -0.15], [0.33, -0.17], [0.2, -0.2], [0.1, -0.27], [0, -0.29]];
+  parts.push({ geometry: planform(fins, { nose: 0.36, depth: 0.012, bevel: 0.012 }), matrix: at(0, -0.012, 0), kind: 0 });
+  // The driving plane at the bow, painted in the army's red.
+  parts.push({ geometry: planform([[0.07, 0.5], [0.13, 0.465], [0.12, 0.42], [0.05, 0.4], [0, 0.4]], { nose: 0.51, depth: 0.008, bevel: 0.008 }), matrix: at(0, -0.035, 0), kind: 6 });
+  // The tribubble bridge.
+  parts.push(sphere(0.055, 0, 0.095, 0.3, 9, 28));
+  parts.push(sphere(0.04, -0.072, 0.075, 0.26, 9, 24));
+  parts.push(sphere(0.04, 0.072, 0.075, 0.26, 9, 24));
+  // Otoh Gunga on its back.
+  for (let i = 0; i < 13; i++) {
+    const z = -0.24 + random() * 0.42;
+    const x = (random() * 2 - 1) * 0.11;
+    const r = 0.022 + random() * 0.036;
+    const surface = 0.078 * Math.sqrt(Math.max(0, 1 - ((z - 0.06) / 0.38) ** 2 - (x / 0.18) ** 2));
+    parts.push(sphere(r, x, surface + r * 0.45, z, 9, 18));
+  }
+  // Luminous streaks down both flanks.
+  for (const side of [-1, 1]) {
+    for (let i = 0; i < 3; i++) {
+      parts.push({ geometry: new THREE.SphereGeometry(0.5, 14, 8), matrix: at(side * 0.172, 0.018, 0.22 - i * 0.2).multiply(scaled(0.012, 0.01, 0.12)), kind: 8 });
+    }
+    // Booma cradles on the fins, each holding a ball of plasma.
+    for (const [x, z] of [[0.3, -0.03], [0.22, 0.12]]) {
+      parts.push({ geometry: new THREE.TorusGeometry(0.026, 0.007, 8, 24), matrix: at(side * x, 0.03, z).multiply(new THREE.Matrix4().makeRotationX(Math.PI / 2)), kind: 1 });
+      parts.push(sphere(0.02, side * x, 0.036, z, 2, 16));
+    }
+  }
+  // The electromotive drive: a ring at the stern and six tentacles spiralling back from it.
+  parts.push({ geometry: new THREE.TorusGeometry(0.075, 0.012, 10, 40), matrix: at(0, 0, -0.3), kind: 2 });
+  for (let i = 0; i < 6; i++) {
+    const angle = (i / 6) * Math.PI * 2;
+    const root = [Math.cos(angle) * 0.075, Math.sin(angle) * 0.045, -0.3];
+    parts.push({ geometry: tentacle(root, { reach: 0.24, turns: 1.1, radius: 0.011, phase: angle, spread: 0.04 }), kind: 0 });
+    const tip = [root[0] * 1.5, root[1], -0.54];
+    parts.push(sphere(0.014, tip[0], tip[1], tip[2], 2, 12));
+  }
+  return {
+    geometry: merge(parts),
+    extremes: v3([[0, 0, 0.52], [-0.44, 0, -0.14], [0.44, 0, -0.14], [0, 0.16, 0.1], [0, -0.09, 0.05], [-0.12, 0, -0.56], [0.12, 0, -0.56], [0, 0.15, 0.3]]),
+    lights: [[-0.43, 0.01, -0.15], [0.43, 0.01, -0.15], [0, 0.155, 0.3]],
+  };
+}
+
 // Fighters -------------------------------------------------------------------------------------------
 
 // The ARC-170 of the Clone Wars (canon, 12.71 m): a long nose and cockpit, a tail gunner's canopy,
@@ -180,6 +268,33 @@ export function sithFighter() {
     parts.push({ geometry: new THREE.CircleGeometry(0.026, 14), matrix: at(side * 0.05, -0.01, -0.2605).multiply(facingBack), kind: 2 });
   }
   return { geometry: merge(parts), engines: [[0.05, -0.01, -0.27], [-0.05, -0.01, -0.27]], cannons };
+}
+
+// A Gungan starfighter. Legends says only that the Gungans based their starfighter designs on the
+// bongo; the rest is extrapolation. A small manta with a bubble cockpit and two smaller bubbles
+// (the tribubble), a red bow plane, luminous wing markings, a ball of booma plasma slung under the
+// belly for it to throw, and three electromotive tentacles astern.
+export function starbongo() {
+  const parts = [];
+  const wing = [[0.07, 0.34], [0.2, 0.16], [0.3, 0.0], [0.31, -0.08], [0.2, -0.085], [0.08, -0.16], [0, -0.18]];
+  parts.push({ geometry: planform(wing, { nose: 0.4, depth: 0.02, bevel: 0.018, detail: 4, bevels: 2 }), kind: 0 });
+  parts.push({ geometry: new THREE.SphereGeometry(0.5, 18, 10), matrix: at(0, 0.02, 0.07).multiply(scaled(0.13, 0.08, 0.44)), kind: 0 });
+  parts.push(sphere(0.06, 0, 0.06, 0.19, 9, 18));
+  parts.push(sphere(0.034, -0.07, 0.035, 0.11, 9, 16));
+  parts.push(sphere(0.034, 0.07, 0.035, 0.11, 9, 16));
+  parts.push({ geometry: planform([[0.05, 0.47], [0.08, 0.43], [0.04, 0.4], [0, 0.4]], { nose: 0.48, depth: 0.006, bevel: 0.006, detail: 3, bevels: 1 }), matrix: at(0, -0.012, 0), kind: 6 });
+  for (const side of [-1, 1]) {
+    for (let i = 0; i < 3; i++) parts.push(sphere(0.011, side * (0.12 + i * 0.06), 0.02, 0.1 - i * 0.07, 8, 10));
+  }
+  parts.push({ geometry: new THREE.TorusGeometry(0.046, 0.009, 8, 24), matrix: at(0, -0.06, 0.08).multiply(new THREE.Matrix4().makeRotationX(Math.PI / 2)), kind: 1 });
+  parts.push(sphere(0.038, 0, -0.064, 0.08, 2, 18));
+  parts.push({ geometry: new THREE.TorusGeometry(0.03, 0.008, 8, 20), matrix: at(0, 0.01, -0.17), kind: 2 });
+  for (let i = 0; i < 3; i++) {
+    const angle = (i / 3) * Math.PI * 2 + Math.PI / 2;
+    const root = [Math.cos(angle) * 0.03, 0.01 + Math.sin(angle) * 0.02, -0.17];
+    parts.push({ geometry: tentacle(root, { reach: 0.34, turns: 1.4, radius: 0.008, phase: angle, spread: 0.035, segments: 22, sides: 5 }), kind: 0 });
+  }
+  return { geometry: merge(parts), engines: [[0, 0.01, -0.2]], cannons: [[0, -0.064, 0.13]] };
 }
 
 // Freighters -----------------------------------------------------------------------------------------
