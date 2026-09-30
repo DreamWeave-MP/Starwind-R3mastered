@@ -709,6 +709,8 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     const centre = bounds.getCenter(new THREE.Vector3());
     const half = bounds.getSize(new THREE.Vector3()).multiplyScalar(0.5);
     half.set(Math.max(half.x, 0.03), Math.max(half.y, 0.03), Math.max(half.z, 0.03));
+    // [r3:lore] A hydrostatic bubble is rounder than a flat hull: never under half as tall or wide as it is long.
+    if (side.shield === 'bubble') half.set(Math.max(half.x, half.z * 0.5), Math.max(half.y, half.z * 0.42), half.z);
     for (const sample of samples) sample.sub(centre).divide(half);
     const bubble = side.shield === 'bubble'; // [r3:lore] one smooth ellipsoid round the whole hull
     const reachToward = (direction) => {
@@ -1102,7 +1104,8 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     visit.heading.copy(visit.velocity).normalize();
     visit.heading.z += 0.25;
     visit.heading.normalize();
-    visit.up.set((random() - 0.5) * 0.3, 1, 0.3).normalize();
+    // [r3:lore] A flat hull, a manta's, turns its back further toward the viewer, or it is a plank.
+    visit.up.set((random() - 0.5) * 0.3, 1, 0.3 + (visit.ship.design.tilt || 0)).normalize();
     visit.shield = 0.8 + 0.5 * random();
     visit.hull = 0;
     visit.blasts = 0;
