@@ -318,7 +318,7 @@ export function createDirector({ kit, fleet = null, memory = null, random = kit.
   function spawn({ key, side, length, position, velocity, heading = null, up = new THREE.Vector3(0, 1, 0), label = null, contactClass = null,
     textured = false, windows = 1, haze: distance = 0, char = 0, tumble = null, hyper = true, hp = 1, shootable = true, think = null }) {
     const { geometry, extremes } = design(key);
-    const material = shipMaterial(side, { textured, panels: textured ? 30 : 18, windows, haze: distance });
+    const material = shipMaterial(side, { textured, panels: textured ? 30 : 18, windows, haze: distance, selfLit: side.material?.selfLit || 0 }); // [r3:lore] selfLit
     if (char > 0) {
       material.uniforms.uHull.value.multiplyScalar(1 - char * 0.75);
       material.uniforms.uPaint.value.multiplyScalar(1 - char * 0.8);

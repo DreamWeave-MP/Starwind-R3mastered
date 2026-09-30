@@ -87,6 +87,7 @@ const SHIP_FRAGMENT = /* glsl */ `
   uniform float uWindows;
   uniform float uHaze;       // how far off it is: distance greys it toward the sky
   uniform float uTextured;   // 1 where the hull maps below dress the plating
+  uniform float uSelfLit;    // [r3:lore] a living hull's own faint light, a fraction of its colour
   uniform sampler2D uHullMap;    // plate colours
   uniform sampler2D uDetailMap;  // r: relief, g: lit ports
   uniform float uMapScale;
@@ -198,7 +199,7 @@ const SHIP_FRAGMENT = /* glsl */ `
     col += uAir * pow(max(1.0 - facing, 0.0), 4.0) * 0.35;
     // [r3:lore] A bubble's rim takes the drive's colour, and a lived-in one glows with lamplight within,
     // as Otoh Gunga's do.
-    if (bubble) col += uEngine * (pow(max(1.0 - facing, 0.0), 2.5) * 0.9 + 0.06) + vec3(0.95, 0.72, 0.4) * (0.1 + 0.16 * facing) * uWindows;
+    if (bubble) col += uEngine * (pow(max(1.0 - facing, 0.0), 2.5) * 0.9 + 0.04) + vec3(0.95, 0.72, 0.4) * (0.03 + 0.07 * facing) * uWindows;
     col += uSunColor * pow(max(1.0 - facing, 0.0), 3.0) * max(dot(-v, uSunDir), 0.0) * 0.9;
 
     col += vec3(1.0, 0.84, 0.58) * ports * 2.6 * uWindows;
@@ -212,6 +213,7 @@ const SHIP_FRAGMENT = /* glsl */ `
       col += vec3(1.0, 0.86, 0.62) * port * row * step(0.72, hash21(floor(w))) * 1.8 * uWindows;
     }
 
+    col += base * uSelfLit * (painted || canopy || bubble ? 0.0 : 1.0); // [r3:lore]
     col = mix(col, uAir * 0.12 + vec3(0.01, 0.015, 0.02), uHaze);
     col = mix(col, vec3(2.2, 2.6, 3.2), uWarp);
     gl_FragColor = vec4(col * uFade, 1.0);
@@ -640,7 +642,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     owned.push(object);
     return object;
   }
-  const shipMaterial = (side, { textured = false, panels = 22, windows = 1, haze = 0 } = {}) => new THREE.ShaderMaterial({
+  const shipMaterial = (side, { textured = false, panels = 22, windows = 1, haze = 0, selfLit = 0 } = {}) => new THREE.ShaderMaterial({
     vertexShader: SHIP_VERTEX,
     fragmentShader: SHIP_FRAGMENT,
     uniforms: {
@@ -659,6 +661,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
       uWindows: { value: windows },
       uHaze: { value: haze },
       uTextured: { value: textured ? 1 : 0 },
+      uSelfLit: { value: selfLit }, // [r3:lore]
       uHullMap: { value: hullMap },
       uDetailMap: { value: detailMap },
       uMapScale: { value: 2.4 },

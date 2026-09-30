@@ -382,7 +382,7 @@ export const FACTIONS = {
   // bongo, the fighters and the armada's name are this site's extrapolation. Boomas, not lasers; a
   // hydrostatic bubble for a shield; coral hulls, not plating.
   gungan: { name: 'Gungan Grand Armada', hull: '#b87a40', paint: '#b8402c', engine: '#5ad8ff', laser: '#7fe6ff', bolt: 'booma', shield: 'bubble',
-    material: { textured: false, panels: 2.5, windows: 0.7 }, fighterMaterial: { panels: 2 }, fighters: ['starbongo'],
+    material: { textured: false, panels: 2.5, windows: 0.7, selfLit: 0.22 }, fighterMaterial: { panels: 2, selfLit: 0.22 }, fighters: ['starbongo'],
     capitals: [['mantaris', 'Mantaris-class · 98 m'], ['warBongo', 'Bombad-class war bongo · 410 m']] },
 };
 
