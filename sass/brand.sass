@@ -151,25 +151,10 @@
     color: var(--dw-accent)
     opacity: 1
 
-// [r3:guide] A phone's readout sits in the corner beside the title, with room for the count only.
+// [r3:guide] A phone's readout has room for the count only.
 @media (max-width: 600px)
   .r3-survey__guide-more
     display: none
-
-  // The corner readout's second line runs under the top of the text column. The column's gaps and
-  // the kicker, which holds only labels, let taps through to it; everything else in the column
-  // still takes them.
-  .dw-hero--art .dw-hero__grid
-    pointer-events: none
-
-    > :not(.dw-hero__text)
-      pointer-events: auto
-
-  .dw-hero--art .dw-hero__text
-    pointer-events: none
-
-    > :not(.dw-kicker)
-      pointer-events: auto
 
 .r3-survey__note
   color: var(--dw-text-muted)
@@ -557,17 +542,87 @@
     -webkit-user-select: none
     -webkit-touch-callout: none
 
-// [r3:qa] A contact in the right of the stage hangs its readouts from its right edge.
-.r3-contact.is-flipped
-  .r3-contact__label,
-  .r3-contact__status,
-  .r3-contact__sensor,
-  .r3-contact__weather,
-  .r3-contact__hail
-    right: 0
-    left: auto
-    text-align: right
+// [r3:stage] The live hero in three bands, so nothing of the page sits over the simulation and
+// nothing of it gets in the page's way: the words on top, on the page's own background; the stage,
+// which is the simulation's alone; then the survey readout and the facts. The template's markup
+// stays; its grid dissolves (display: contents) so its children can take the bands, and
+// static/js/r3-hero.js puts the readout in its own. Without JavaScript the still fills the stage.
+$r3-inset: max(var(--dw-gutter), calc((100% - var(--dw-width-page)) / 2 + var(--dw-gutter)))
 
-  .r3-contact__systems
-    right: 0
-    left: auto
+.dw-hero.dw-hero--art
+  display: grid
+  grid-template-columns: minmax(0, 1fr)
+  grid-template-areas: "words" "stage" "survey" "facts"
+  padding: 0
+  background: linear-gradient(180deg, var(--dw-bg-1), var(--dw-bg-0))
+  touch-action: auto
+
+  > .dw-hero__grid
+    display: contents
+
+  .dw-hero__text
+    grid-area: words
+    margin-inline: $r3-inset
+    padding-block: clamp(1rem, .6rem + 1.4vw, 2rem) clamp(.9rem, .6rem + .8vw, 1.25rem)
+
+    .dw-hero__title
+      margin-bottom: var(--dw-space-2)
+
+    .dw-hero__summary
+      margin-bottom: var(--dw-space-4)
+
+  .dw-hero__art
+    grid-area: stage
+    position: relative
+    inset: auto
+    z-index: 0
+    // As tall as it can be while the survey readout under it stays on a laptop's first screen.
+    height: clamp(380px, min(62vh, 100vh - 24rem), 780px)
+    overflow: hidden
+    border-block: 1px solid var(--dw-line)
+    // The planet and the orbit take sideways drags; vertical swipes still scroll the page.
+    touch-action: pan-y pinch-zoom
+
+    @media (max-width: 760px)
+      height: clamp(340px, min(62svh, 100svh - 29rem), 640px)
+
+  > .r3-survey
+    grid-area: survey
+    position: static
+    justify-content: flex-start
+    max-width: none
+    margin: .75rem $r3-inset 0
+    text-shadow: none
+
+  .dw-strip
+    grid-area: facts
+    margin: .75rem $r3-inset clamp(1.5rem, 1rem + 2vw, 2.5rem)
+
+  // The still, in the stage: the stars and the sky on one layer, the planet's edge on the other,
+  // cut at the stage's foot. The live canvas fades in over them and they leave.
+  &::before,
+  &::after
+    grid-area: stage
+
+  &::before
+    background-image: radial-gradient(circle at 23px 41px, rgb(255 255 255 / 85%) 0 .7px, transparent 1.2px), radial-gradient(circle at 131px 17px, rgb(200 240 255 / 70%) 0 .6px, transparent 1.1px), radial-gradient(circle at 67px 103px, rgb(255 255 255 / 60%) 0 .5px, transparent 1px), radial-gradient(circle at 181px 71px, rgb(160 240 240 / 80%) 0 .9px, transparent 1.5px), radial-gradient(circle at 12px 150px, rgb(255 255 255 / 45%) 0 .5px, transparent 1px), radial-gradient(circle at 240px 190px, rgb(255 240 220 / 70%) 0 .8px, transparent 1.3px), radial-gradient(ellipse 55% 110% at 82% -20%, color-mix(in oklab, var(--dw-accent) 14%, transparent), transparent 70%), radial-gradient(ellipse 40% 80% at 8% 120%, color-mix(in oklab, var(--r3-violet) 12%, transparent), transparent 70%), linear-gradient(180deg, var(--dw-bg-1), var(--dw-bg-0))
+    background-size: 173px 131px, 211px 157px, 97px 113px, 263px 199px, 151px 167px, 331px 241px, 100% 100%, 100% 100%, 100% 100%
+    mask-image: none
+    opacity: 1
+
+  &::after
+    clip-path: inset(0 0 52rem 0)
+
+  @media (max-width: 760px)
+    &::after
+      clip-path: inset(0 0 55rem 0)
+
+// [r3:stage] Every line under a contact's brackets shares one shift (static/js/r3-ships.js), so the
+// readout stays on the stage when the ship is near its right edge.
+.r3-contact__label,
+.r3-contact__status,
+.r3-contact__systems,
+.r3-contact__sensor,
+.r3-contact__weather,
+.r3-contact__hail
+  left: var(--r3-text-x, 0px)

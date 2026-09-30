@@ -451,15 +451,13 @@ export function createDirector({ kit, fleet = null, memory = null, random = kit.
     }
   }
 
-  // Where in the hero a ship may go: the free sky beside the text, or low on a phone.
+  // Where on the stage a ship may go: anywhere, clear of its edges. [r3:stage]
   function lane({ depth = -8, size = 200, high = false } = {}) {
     const { width, height, free, narrow } = view;
-    // On a narrow hero the text fills it, so encounters keep low over the planet's limb, as the
-    // fleet's ships do.
-    const start = narrow ? width * 0.42 : Math.max(free + 40, width * 0.48);
+    const start = free + (narrow ? 16 : 40);
     const x0 = start + size * 0.4;
     const x1 = Math.max(x0 + 40, width - 30 - size * 0.4);
-    const y = narrow ? height * (0.68 + 0.1 * random()) : height * (high ? 0.14 + 0.12 * random() : 0.22 + 0.3 * random());
+    const y = height * (high ? 0.14 + 0.12 * random() : 0.22 + 0.3 * random());
     return { x0, x1, y, depth, perPx: perPixelAt(depth) };
   }
   const toWorld = (px, py, depth) => worldAt(px, py, depth, new THREE.Vector3());

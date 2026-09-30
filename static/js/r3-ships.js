@@ -9,7 +9,7 @@
 // on the capital ships tinted by their livery, the sun from behind the planet, the planet's glow
 // from below, a backlit rim, lit ports and burning engines. Going to or coming from hyperspace, a
 // ship is stretched along its heading into a streak and washed white, and a flash marks the moment.
-// They fly only in the part of the hero the text leaves free, and under prefers-reduced-motion a
+// They fly anywhere on the hero's stage, and under prefers-reduced-motion a
 // capital ship holds still in the middle of its crossing and the fighters stay away.
 
 import * as THREE from './vendor/three.module.min.js';
@@ -111,7 +111,7 @@ const SHIP_FRAGMENT = /* glsl */ `
 
   void main() {
     if (uFade <= 0.001) discard;
-    vec3 n = normalize(vNormal);
+    vec3 n = safeNormalize(vNormal, vec3(0.0, 0.0, 1.0));
     vec3 v = safeNormalize(uCamera - vWorld, vec3(0.0, 0.0, 1.0));
     if (dot(n, v) < 0.0) n = -n;
 
@@ -152,7 +152,7 @@ const SHIP_FRAGMENT = /* glsl */ `
       float hy = textureGrad(uDetailMap, mapUv + vec2(0.0, step2.y), mapDx, mapDy).r;
       vec3 tu = onTop ? vec3(1.0, 0.0, 0.0) : (sideways ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0));
       vec3 tv = onTop ? vec3(0.0, 0.0, 1.0) : vec3(0.0, 1.0, 0.0);
-      vec3 objectNormal = normalize(vObjectNormal);
+      vec3 objectNormal = safeNormalize(vObjectNormal, vec3(0.0, 1.0, 0.0));
       vec3 bumped = objectNormal - (tu * (hx - detail.r) + tv * (hy - detail.r)) * 3.0;
       n = safeNormalize(uRotation * bumped, n);
       if (dot(n, v) < 0.0) n = -n;
@@ -181,8 +181,8 @@ const SHIP_FRAGMENT = /* glsl */ `
     vec3 h = safeNormalize(uSunDir + v, n);
     col += uSunColor * pow(max(dot(n, h), 0.0), canopy ? 160.0 : (solar ? 24.0 : 48.0)) * (canopy ? 2.0 : (solar ? 0.12 : 0.45)) * tone;
     float facing = max(dot(n, v), 0.0);
-    col += uAir * pow(1.0 - facing, 4.0) * 0.35;
-    col += uSunColor * pow(1.0 - facing, 3.0) * max(dot(-v, uSunDir), 0.0) * 0.9;
+    col += uAir * pow(max(1.0 - facing, 0.0), 4.0) * 0.35;
+    col += uSunColor * pow(max(1.0 - facing, 0.0), 3.0) * max(dot(-v, uSunDir), 0.0) * 0.9;
 
     col += vec3(1.0, 0.84, 0.58) * ports * 2.6 * uWindows;
 
@@ -300,7 +300,7 @@ const PARTICLE_FRAGMENT = /* glsl */ `
     if (vKind < 0.5) {
       vec3 hot = mix(vec3(1.9, 1.75, 1.5), vec3(1.7, 1.05, 0.3), smoothstep(0.0, 0.18, vAge));
       vec3 cooling = mix(vec3(1.1, 0.38, 0.08), vec3(0.25, 0.05, 0.02), smoothstep(0.35, 0.9, vAge));
-      col = mix(hot, cooling, smoothstep(0.15, 0.45, vAge)) * (1.0 - r * r) * pow(1.0 - vAge, 1.2);
+      col = mix(hot, cooling, smoothstep(0.15, 0.45, vAge)) * (1.0 - r * r) * pow(max(1.0 - vAge, 0.0), 1.2);
     } else if (vKind < 1.5) {
       col = vec3(2.6, 2.1, 1.3) * (1.0 - smoothstep(0.2, 1.0, r)) * (1.0 - vAge);
     } else {
@@ -324,7 +324,7 @@ const SHOCK_FRAGMENT = /* glsl */ `
   varying float vRadius;
   void main() {
     float edge = smoothstep(0.82, 0.985, vRadius) * (1.0 - smoothstep(0.985, 1.0, vRadius));
-    vec3 col = mix(vec3(1.3, 1.5, 1.7), vec3(0.9, 0.45, 0.25), uAge) * edge * pow(1.0 - uAge, 1.5);
+    vec3 col = mix(vec3(1.3, 1.5, 1.7), vec3(0.9, 0.45, 0.25), uAge) * edge * pow(max(1.0 - uAge, 0.0), 1.5);
     gl_FragColor = vec4(col, 1.0);
   }
 `;
@@ -537,13 +537,13 @@ const SHIELD_FRAGMENT = /* glsl */ `
       vec4 hit = uHits[i];
       if (hit.w < 0.0) continue;
       float reach = distance(vLocal, hit.xyz);
-      float ring = exp(-pow((reach - hit.w * 0.42) / 0.03, 2.0));
+      float ring = exp(-pow(abs(reach - hit.w * 0.42) / 0.03, 2.0));
       float spot = exp(-reach * reach * 500.0) * 2.0;
       glow += (ring * 0.7 + spot) * (1.0 - hit.w) * (1.0 - hit.w);
     }
     vec3 v = normalize(uCamera - vWorld);
-    vec3 n = normalize(vWorldNormal);
-    float rim = pow(1.0 - abs(dot(n, v)), 2.0);
+    vec3 n = vWorldNormal * inversesqrt(max(dot(vWorldNormal, vWorldNormal), 1e-8));
+    float rim = pow(max(1.0 - abs(dot(n, v)), 0.0), 2.0);
     // The hex lattice, projected from the three sides and blended by which one the shell faces, so
     // it wraps the hull without seams or stretching.
     vec3 lattice = vLocal * 38.0;
@@ -855,6 +855,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
   });
   let nextShock = 0;
   const flatten = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI / 2);
+  const hullInverse = new THREE.Quaternion();
   function shockwave(origin, quaternion, reach, life = 1.4) {
     const shock = shocks[nextShock];
     nextShock = (nextShock + 1) % shocks.length;
@@ -923,12 +924,15 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     contact.element.style.width = `${(right - left + pad * 2).toFixed(1)}px`;
     contact.element.style.height = `${(bottom - top + pad * 2).toFixed(1)}px`;
     contact.element.classList.add('is-locked');
-    // [r3:qa] A bracket in the right of the stage reads its lines from its right edge, so they end
-    // inside the stage instead of running off it.
-    const flipped = (left + right) / 2 > view.width * 0.55;
-    if (contact.flipped !== flipped) {
-      contact.flipped = flipped;
-      contact.element.classList.toggle('is-flipped', flipped);
+    // [r3:stage] The readout under the brackets stays on the stage: where it would run off the
+    // right edge it moves left of them, and never left of the stage. Its width is estimated from
+    // the label's length (about 7px a character), so nothing is measured each frame.
+    const boxLeft = left - pad;
+    const textWidth = contact.label.textContent.length * 7.2 + 12;
+    const shift = Math.round(Math.max(8 - boxLeft, Math.min(0, view.width - 8 - textWidth - boxLeft)));
+    if (shift !== contact.shift) {
+      contact.shift = shift;
+      contact.element.style.setProperty('--r3-text-x', `${shift}px`);
     }
     return { left, top, right, bottom };
   }
@@ -963,7 +967,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
   const visits = [makeVisit(0)];
   if (scenario.war) visits.push(makeVisit(1));
   let visitCount = 0;
-  const atWar = () => visits.length > 1 && !view.narrow;
+  const atWar = () => visits.length > 1; // [r3:stage] a phone's stage has room for a battle
 
   function planVisit(visit) {
     const { width, height, free, narrow } = view;
@@ -977,12 +981,11 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     const pool = named.length ? named : (asked.length && !war ? asked : capitals.filter((entry) => entry.side === side && !busy.includes(entry)));
     const ship = pool[Math.floor(random() * pool.length)];
     visit.ship = ship;
-    // As long as a third of the free sky, within reason; the hull's centre keeps half its length
-    // clear of the text and the hero's edges. On a phone the text fills the hero, so the ship keeps
-    // low and small, over the planet's limb beside the status strip. At war each is a little
-    // smaller, the one crossing high and far off, the other low and near.
-    const start = narrow ? width * 0.46 : Math.max(free + 30, width * 0.45);
-    const lengthPx = (narrow ? Math.min(width * 0.26, 100) : THREE.MathUtils.clamp((width - start) * 0.42, 180, 340)) * (war ? 0.72 : 1);
+    // As long as a third of the sky, within reason; the hull's centre keeps half its length clear
+    // of the stage's edges. A phone's stage is narrower, so its ships are smaller. At war each is a
+    // little smaller again, the one crossing high and far off, the other low and near.
+    const start = free + (narrow ? 16 : 30); // [r3:stage] the whole stage is sky
+    const lengthPx = (narrow ? THREE.MathUtils.clamp((width - start) * 0.36, 90, 150) : THREE.MathUtils.clamp((width - start) * 0.42, 180, 340)) * (war ? 0.72 : 1);
     const leftEdge = start + lengthPx * 0.55;
     const rightEdge = width - 24 - lengthPx * 0.7;
     const span = Math.max(rightEdge - leftEdge, 40);
@@ -990,10 +993,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     const x = direction < 0 ? leftEdge + span * (0.7 + 0.3 * random()) : leftEdge + span * (0.3 * random());
     let y;
     let depth;
-    if (narrow) {
-      y = height * (0.74 + 0.05 * random());
-      depth = -7 - random() * 4;
-    } else if (war) {
+    if (war) {
       y = height * (visit.slot === 0 ? 0.16 + 0.08 * random() : 0.4 + 0.08 * random());
       depth = visit.slot === 0 ? -11 - random() * 2 : -6 - random() * 2;
     } else {
@@ -1040,7 +1040,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
   }
   function planPass() {
     const { width, height, free, narrow } = view;
-    const left = narrow ? width * 0.5 : Math.max(free + 40, width * 0.48);
+    const left = free + (narrow ? 12 : 40); // [r3:stage] the whole stage is sky
     const right = width * 0.98;
     const mid = (left + right) / 2;
     const cruising = visits.filter((visit) => visit.state === 'cruising' && visit.ship && visit.systems.hangar === 0); // [r3:gunnery] a hit hangar launches nothing
@@ -1414,7 +1414,10 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     const position = visit.position.copy(visit.start);
     // The line of travel in the hull's own coordinates, and how far the hull reaches along it each way.
     orient(ship.group, visit.heading, visit.up);
-    const travelAxis = uniforms.uStretchAxis.value.copy(visit.velocity).normalize().applyQuaternion(ship.group.quaternion.clone().invert());
+    // A hull standing still has no line of travel; it stretches along its own length.
+    const travelAxis = visit.velocity.lengthSq() > 1e-12
+      ? uniforms.uStretchAxis.value.copy(visit.velocity).normalize().applyQuaternion(hullInverse.copy(ship.group.quaternion).invert())
+      : uniforms.uStretchAxis.value.set(0, 0, 1);
     let rear = Infinity;
     let front = -Infinity;
     for (const corner of ship.design.extremes) {
