@@ -1252,8 +1252,7 @@ function start(hero, art) {
       } else if (frame.kind === 'close') {
         planet.radius = Math.max(width * 0.9, 1100) * (0.9 + 0.3 * frame.size);
         planet.x = textRight + free * (0.45 + 0.2 * frame.at);
-        const reach = planet.x - (textRight + 60);
-        crown = Math.min(height * (0.22 + 0.12 * frame.lift), planet.radius - Math.sqrt(Math.max(0, planet.radius * planet.radius - reach * reach)));
+        crown = height * (0.22 + 0.12 * frame.lift); // [r3:stage] no text column for the limb to clear
       } else {
         planet.radius = Math.max(width * 0.36, 480) * (0.85 + 0.3 * frame.size);
         planet.x = textRight + free * (0.42 + 0.2 * frame.at);
