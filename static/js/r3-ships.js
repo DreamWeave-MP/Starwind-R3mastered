@@ -1271,6 +1271,12 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     out.set(local[0] + (random() - 0.5) * 0.08, local[1] + (random() - 0.5) * 0.04, local[2] + (random() - 0.5) * 0.08);
     return out.multiplyScalar(1).applyMatrix4(visit.ship.group.matrixWorld);
   }
+  // [r3:memory] [r3:qa] Whose ship the viewer destroyed, and, at war, whom that helped.
+  function recordKill(side, capital) {
+    if (!memory || !side) return;
+    const enemy = scenario.war ? sides.find((entry) => entry !== side) : null;
+    memory.record('kill', { faction: side.key, capital, enemy: enemy ? enemy.key : null });
+  }
   function resetSystems(visit) {
     for (const key of SYSTEMS) {
       visit.systems[key] = 0;
@@ -1279,6 +1285,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     visit.shieldMax = visit.shield;
     visit.secondaries = 0;
     visit.statusUntil = 0;
+    visit.struckByViewer = false; // [r3:qa] whether a kill of this visit is the viewer's
     visit.contact.status.textContent = '';
     visit.contact.element.classList.remove('is-engaged', 'is-announcing');
   }
@@ -1455,6 +1462,8 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
         visit.contact.element.classList.remove('is-locked', 'is-lost');
         visit.state = 'waiting';
         visit.until = clock + 3.5 + random() * 3;
+        if (visit.struckByViewer) recordKill(ship.side, true); // [r3:qa] once, at destruction
+        visit.struckByViewer = false;
         for (const listener of listeners.destroyed) listener({ position: position.clone(), length: visit.length, quaternion: ship.group.quaternion.clone(), velocity: visit.velocity.clone(), side: ship.side, material: ship.material });
         visit.start.copy(position);
         return;
@@ -1768,10 +1777,10 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     shoot(x, y) {
       const target = targetAt(x, y);
       if (!target) return false;
-      // [r3:memory] Remembered: whose ship it was, and, at war, whom that helped.
-      const struck = target.fighter ? target.fighter.side : target.capital.ship.side;
-      const enemy = scenario.war ? sides.find((entry) => entry !== struck) : null;
-      if (memory) memory.record('kill', { faction: struck.key, capital: !target.fighter, enemy: enemy ? enemy.key : null });
+      // [r3:memory] Remembered: a fighter dies at the click, so its kill is recorded now; a capital
+      // only when it is destroyed (see explode), once, however many hits that took. [r3:qa]
+      if (target.fighter) recordKill(target.fighter.side, false);
+      else target.capital.struckByViewer = true;
       if (target.fighter) {
         const fighter = target.fighter;
         fighter.dead = true;
@@ -1782,6 +1791,8 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
           shake = Math.max(shake, 0.3);
         }
       } else if (reduceMotion) {
+        recordKill(target.capital.ship.side, true); // [r3:qa] no explosion under reduced motion
+        target.capital.struckByViewer = false;
         target.capital.ship.group.visible = false;
         target.capital.state = 'waiting';
         target.capital.until = clock + 5;
