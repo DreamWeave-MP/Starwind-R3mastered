@@ -183,9 +183,9 @@ export function createNav({ stage, survey, jumpTo, live = () => ({}), reduceMoti
   function show() {
     chart = read();
     const root = document.createElement('div');
+    // Like the rest of the hero's art it is decoration, hidden from assistive technology, so nothing
+    // in it takes focus.
     root.className = 'r3-chart';
-    root.setAttribute('role', 'dialog');
-    root.setAttribute('aria-label', 'Star chart');
     // The chart takes the pointer whole: nothing under it shoots, orbits, flies or scans.
     for (const type of ['pointerdown', 'pointerup', 'pointermove', 'click', 'dblclick', 'wheel']) {
       root.addEventListener(type, (event) => event.stopPropagation(), { passive: type === 'wheel' || type === 'pointermove' });
@@ -203,13 +203,6 @@ export function createNav({ stage, survey, jumpTo, live = () => ({}), reduceMoti
         return;
       }
       if (!event.target.closest('.r3-chart__head')) close();
-    });
-    root.addEventListener('keydown', (event) => {
-      const stop = event.target.closest && event.target.closest('[data-stop]');
-      if (stop && (event.key === 'Enter' || event.key === ' ')) {
-        event.preventDefault();
-        travel(stop);
-      }
     });
     stage.append(root);
     open = root;
@@ -331,8 +324,6 @@ export function createNav({ stage, survey, jumpTo, live = () => ({}), reduceMoti
         class: `r3-chart__stop${isCurrent ? ' is-current' : ''}${id === last && !here ? ' is-last' : ''}`,
         'data-stop': id, 'data-current': isCurrent ? '1' : '0',
         transform: `translate(${at.x.toFixed(2)} ${at.y.toFixed(2)})`,
-        tabindex: isCurrent ? '-1' : '0', role: 'button',
-        'aria-label': isCurrent ? `${node.label}, you are here` : `Jump back to ${node.label}`,
       }, svg);
       element('title', {}, group).textContent = `${node.label} · ${node.note || node.kind}${isCurrent ? ' · you are here' : ` · visited ${node.visits}× · jump back`}`;
       element('circle', { class: 'r3-chart__hit', r: (14 * u).toFixed(2) }, group);
