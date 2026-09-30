@@ -78,6 +78,24 @@ export const WORLDS = [
   { name: "Lah'mu", note: 'Outer Rim · black sand', lowland: '#1f5f6a', land: '#1c1c1e', highland: '#4a5a3a', cloud: '#f2f4f2', air: '#8ad0e0', city: '#ffd48a', sea: 0.55, clouds: 0.4, cities: 0.02, scale: 1.2, scatter: [0.9, 1.2], dust: [0.7, 1.0], thickness: [0.9, 1.1] },
 ];
 
+// [r3:howard] A world on no chart. It is not in WORLDS, so no address names it, no list shows it
+// and no jump aims for it: it just happens, about once in four hundred loads and jumps, and never
+// twice in a session. Its face is textures, not noise (r3-hero.js).
+const UNCHARTED = { name: 'Uncharted', note: '████ ▸ no survey on file', unlisted: true, face: 1, lowland: '#6e4430', land: '#cf9670', highland: '#4a2a18', cloud: '#fff1e6', air: '#ffcaa4', city: '#ffd9a0', sea: 0.22, clouds: 0.16, cities: 0.12, scale: 1.1, moons: 1, scatter: [0.8, 1.0], dust: [1.0, 1.3] };
+const UNCHARTED_ODDS = 1 / 400;
+const UNCHARTED_KEY = 'r3.uncharted';
+
+// Whether this roll is the one. Exported for the odds to be counted.
+export function rollUncharted(roll, seen) {
+  return !seen && roll < UNCHARTED_ODDS;
+}
+function unchartedSeen() {
+  try { return sessionStorage.getItem(UNCHARTED_KEY) === '1'; } catch { return false; }
+}
+function markUncharted() {
+  try { sessionStorage.setItem(UNCHARTED_KEY, '1'); } catch { /* storage blocked: it may come again */ }
+}
+
 const DEFAULTS = { sea: 0.5, clouds: 0.4, cities: 0.1, ice: 0, lava: 0, bands: 0, floating: 0, scale: 1, suns: 1, rings: 0, aurora: 0, moons: 2 };
 
 function key(name) {
@@ -132,7 +150,10 @@ export function pickWorld({ fresh = false, exclude = null, name = null } = {}) {
   const random = generator(Number.isFinite(seed) ? seed : Math.floor(Math.random() * 2 ** 32));
   const named = asked ? WORLDS.find((world) => key(world.name) === key(asked)) : null;
   const choices = WORLDS.filter((world) => world.name !== exclude);
-  const base = { ...DEFAULTS, ...(named || choices[Math.floor(random() * choices.length)]) };
+  // [r3:howard]
+  const secret = (!fresh && query.get('it_just_works') === '1') || (!asked && rollUncharted(Math.random(), unchartedSeen()));
+  if (secret) markUncharted();
+  const base = { ...DEFAULTS, ...(secret ? UNCHARTED : named || choices[Math.floor(random() * choices.length)]) };
   const spread = (value, amount, low = 0, high = 1) => Math.min(high, Math.max(low, value + (random() * 2 - 1) * amount));
   const within = ([low, high]) => low + (high - low) * random();
   const world = {
@@ -177,6 +198,13 @@ export function pickWorld({ fresh = false, exclude = null, name = null } = {}) {
     frame: { kind: pickFrame(random()), size: random(), at: random(), lift: random(), sun: random() },
   };
   for (const part of ['lowland', 'land', 'highland', 'cloud', 'air']) world[part] = nudge(base[part], random, 1);
+  // [r3:howard] It turns slowly, upright, so the face stays on the side it shows.
+  if (secret) {
+    world.spin = 0.1 + random() * 0.05;
+    world.tilt = [(random() - 0.5) * 0.12, 0.22];
+    world.ringed = false;
+    for (const part of ['lowland', 'land', 'highland']) world[part] = nudge(base[part], random, 0.3);
+  }
   const framed = query.get('frame');
   if (['crown', 'shoulder', 'distant', 'close'].includes(framed)) world.frame.kind = framed;
   // The rest of this load's choices (the fleet, the sky) draw on from the same sequence.
