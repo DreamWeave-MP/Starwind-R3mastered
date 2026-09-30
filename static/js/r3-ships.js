@@ -33,6 +33,7 @@ const SHIP_VERTEX = /* glsl */ `
   attribute float aKind;
   uniform float uStretch;
   uniform float uAnchor;
+  uniform vec3 uStretchAxis;   // the line of travel, in the ship's own coordinates
   varying vec3 vObject;
   varying vec3 vObjectNormal;
   varying vec3 vWorld;
@@ -41,8 +42,10 @@ const SHIP_VERTEX = /* glsl */ `
   varying float vDepth;
   void main() {
     vec3 p = position;
-    // Hyperspace: stretched along the heading about one end, which stays put.
-    p.z = (p.z - uAnchor) * uStretch + uAnchor;
+    // Hyperspace: stretched along the line of travel about one end, which stays put: the stern
+    // going out, the bow coming in.
+    float along = dot(p, uStretchAxis);
+    p += uStretchAxis * (along - uAnchor) * (uStretch - 1.0);
     vObject = position;
     vObjectNormal = normal;
     vKind = aKind;
@@ -585,6 +588,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
       uRotation: { value: new THREE.Matrix3() },
       uStretch: { value: 1 },
       uAnchor: { value: 0 },
+      uStretchAxis: { value: new THREE.Vector3(0, 0, 1) },
       ...planetUniforms,
     },
     side: THREE.DoubleSide,
@@ -1173,10 +1177,20 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     let fade = 1;
     let boost = 0;
     const position = visit.position.copy(visit.start);
+    // The line of travel in the hull's own coordinates, and how far the hull reaches along it each way.
+    orient(ship.group, visit.heading, visit.up);
+    const travelAxis = uniforms.uStretchAxis.value.copy(visit.velocity).normalize().applyQuaternion(ship.group.quaternion.clone().invert());
+    let rear = Infinity;
+    let front = -Infinity;
+    for (const corner of ship.design.extremes) {
+      const reach = corner.dot(travelAxis);
+      rear = Math.min(rear, reach);
+      front = Math.max(front, reach);
+    }
     if (visit.state === 'arriving') {
       const a = Math.min(1, visit.age / 0.55);
       stretch = 1 + 60 * Math.pow(1 - a, 3);
-      anchor = 0.5;
+      anchor = front;
       warp = Math.pow(1 - a, 1.5);
       fade = Math.min(1, a * 6);
       if (a >= 1) {
@@ -1191,7 +1205,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
         visit.state = 'leaving';
         visit.start.copy(position);
         visit.age = 0;
-        flashAt(position, 0.9, 0.7);
+        flashAt(localPoint.copy(visit.velocity).normalize().multiplyScalar(visit.length * 0.5).add(position), 0.9, 0.7);
       }
     } else if (visit.state === 'exploding') {
       // A chain of blasts along the hull, then the whole ship at once.
@@ -1219,7 +1233,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     } else if (visit.state === 'leaving') {
       const l = Math.min(1, visit.age / 0.4);
       stretch = 1 + 90 * Math.pow(l, 2.4);
-      anchor = -0.5;
+      anchor = rear;
       warp = Math.min(1, l * 1.6);
       fade = 1 - Math.pow(l, 3);
       boost = 1;
@@ -1231,7 +1245,6 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     }
     ship.group.position.copy(position);
     ship.group.scale.setScalar(visit.length);
-    orient(ship.group, visit.heading, visit.up);
     uniforms.uRotation.value.setFromMatrix4(new THREE.Matrix4().makeRotationFromQuaternion(ship.group.quaternion));
     uniforms.uStretch.value = stretch;
     uniforms.uAnchor.value = anchor;
@@ -1467,7 +1480,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
       if (reduceMotion) return;
       for (const visit of visits) {
         if (visit.state === 'waiting') visit.until = clock + visit.slot * 1.5;
-        else if (visit.state === 'cruising') visit.age = Math.max(visit.age, visit.cruise);
+        else if (visit.state === 'cruising') visit.cruise = Math.min(visit.cruise, visit.age + 1.5);
       }
       if (!pass.active) pass.next = clock + 0.4;
     },
@@ -1499,10 +1512,13 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
       drawTrails();
       return flash;
     },
-    // Everything jumps away: capital ships to hyperspace, fighters out of the pass.
+    // Everything jumps away: capital ships charge their engines and go to hyperspace, fighters
+    // finish their pass.
     leave() {
       for (const visit of visits) {
-        if (visit.state === 'cruising' || visit.state === 'arriving') {
+        if (visit.state === 'cruising') {
+          visit.cruise = Math.min(visit.cruise, visit.age + 1.2);
+        } else if (visit.state === 'arriving') {
           visit.start.copy(visit.position);
           visit.state = 'leaving';
           visit.age = 0;

@@ -108,11 +108,7 @@
   text-shadow: 0 0 6px rgb(0 0 0 / 90%), 0 0 14px rgb(0 0 0 / 70%)
   opacity: 0
   transition: opacity .9s ease
-  cursor: pointer
-
-  &:hover .r3-survey__jump
-    color: var(--dw-accent)
-    opacity: 1
+  pointer-events: none
 
   .r3-hero--live &
     opacity: .85
@@ -129,10 +125,17 @@
 .r3-survey__name
   font-weight: 700
 
-// The survey readout doubles as the jump control.
-.r3-survey__jump
+// The survey readout's controls: only these take the pointer.
+.r3-survey__jump,
+.r3-survey__up
   opacity: .55
+  pointer-events: auto
+  cursor: pointer
   transition: opacity .2s ease, color .2s ease
+
+  &:hover
+    color: var(--dw-accent)
+    opacity: 1
 
 .r3-survey__note
   color: var(--dw-text-muted)

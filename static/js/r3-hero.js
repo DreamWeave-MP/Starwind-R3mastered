@@ -1869,13 +1869,15 @@ function start(hero, art) {
     }
     jump.age += dt;
     const a = jump.age;
-    if (a < 1.1) {
-      const k = a / 1.1;
-      hyper.set(k * k, 1 - smooth(0.15, 0.75, k), k * k);
-      compositeUniforms.uWhite.value = smooth(0.8, 1.0, k) * 0.85;
+    // The ships charge and go first (about a second and a half), then the stars stretch.
+    const windUp = 2.4;
+    if (a < windUp) {
+      const k = smooth(0.55, 1.0, a / windUp);
+      hyper.set(k * k, 1 - smooth(0.6, 0.95, a / windUp), k * k);
+      compositeUniforms.uWhite.value = smooth(0.9, 1.0, a / windUp) * 0.85;
     } else {
       if (!jump.swapped) swapWorld();
-      const k = Math.min(1, (a - 1.1) / 1.5);
+      const k = Math.min(1, (a - windUp) / 1.5);
       hyper.set((1 - k) * (1 - k), smooth(0.3, 1.0, k), (1 - k) * (1 - k));
       compositeUniforms.uWhite.value = 0.85 * (1 - smooth(0.0, 0.3, k));
       if (k >= 1) {
@@ -1885,7 +1887,9 @@ function start(hero, art) {
     }
     camera.position.x += (Math.random() - 0.5) * hyper.x * 0.05;
   }
-  survey.addEventListener('click', () => beginJump());
+  survey.addEventListener('click', (event) => {
+    if (event.target.closest('.r3-survey__jump')) beginJump();
+  });
   hero.addEventListener('dblclick', (event) => {
     const bounds = hero.getBoundingClientRect();
     const point = { x: event.clientX - bounds.left, y: event.clientY - bounds.top };
