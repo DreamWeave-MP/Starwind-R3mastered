@@ -556,3 +556,18 @@
     user-select: none
     -webkit-user-select: none
     -webkit-touch-callout: none
+
+// [r3:qa] A contact in the right of the stage hangs its readouts from its right edge.
+.r3-contact.is-flipped
+  .r3-contact__label,
+  .r3-contact__status,
+  .r3-contact__sensor,
+  .r3-contact__weather,
+  .r3-contact__hail
+    right: 0
+    left: auto
+    text-align: right
+
+  .r3-contact__systems
+    right: 0
+    left: auto

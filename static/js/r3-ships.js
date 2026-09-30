@@ -923,6 +923,13 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     contact.element.style.width = `${(right - left + pad * 2).toFixed(1)}px`;
     contact.element.style.height = `${(bottom - top + pad * 2).toFixed(1)}px`;
     contact.element.classList.add('is-locked');
+    // [r3:qa] A bracket in the right of the stage reads its lines from its right edge, so they end
+    // inside the stage instead of running off it.
+    const flipped = (left + right) / 2 > view.width * 0.55;
+    if (contact.flipped !== flipped) {
+      contact.flipped = flipped;
+      contact.element.classList.toggle('is-flipped', flipped);
+    }
     return { left, top, right, bottom };
   }
 
