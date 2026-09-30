@@ -17,25 +17,29 @@ import { arc170, interdictor, mantaris, sithFighter, starbongo, warBongo } from 
 
 // Geometry --------------------------------------------------------------------------------------
 
+// [r3:lore] Counted first and copied a part at a time into typed arrays, rather than a vertex at a
+// time through getters: a Gungan war bongo took twice as long to build as a star destroyer.
 export function merge(parts) {
-  const positions = [];
-  const normals = [];
-  const kinds = [];
-  for (const { geometry, matrix, kind } of parts) {
+  const flats = parts.map(({ geometry, matrix, kind }) => {
     const flat = geometry.index ? geometry.toNonIndexed() : geometry;
     if (matrix) flat.applyMatrix4(matrix);
-    const position = flat.getAttribute('position');
-    const normal = flat.getAttribute('normal');
-    for (let i = 0; i < position.count; i++) {
-      positions.push(position.getX(i), position.getY(i), position.getZ(i));
-      normals.push(normal.getX(i), normal.getY(i), normal.getZ(i));
-      kinds.push(kind);
-    }
+    return { position: flat.getAttribute('position'), normal: flat.getAttribute('normal'), kind };
+  });
+  const count = flats.reduce((sum, { position }) => sum + position.count, 0);
+  const positions = new Float32Array(count * 3);
+  const normals = new Float32Array(count * 3);
+  const kinds = new Float32Array(count);
+  let offset = 0;
+  for (const { position, normal, kind } of flats) {
+    positions.set(position.array.subarray(0, position.count * 3), offset * 3);
+    normals.set(normal.array.subarray(0, position.count * 3), offset * 3);
+    kinds.fill(kind, offset, offset + position.count);
+    offset += position.count;
   }
   const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
-  geometry.setAttribute('aKind', new THREE.Float32BufferAttribute(kinds, 1));
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+  geometry.setAttribute('aKind', new THREE.BufferAttribute(kinds, 1));
   return geometry;
 }
 
