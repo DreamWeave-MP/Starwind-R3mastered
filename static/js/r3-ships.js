@@ -1640,6 +1640,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
   }
 
   const velocities = new Map();
+  let escort = null; // [r3:pilot] r3-pilot.js's hook into each fighter's pass, set through kit.escort
   function updateFighters(dt) {
     // [r3:memory] A hostile capital's launch cuts in; a friendly side sometimes flies escort.
     if (hostileLaunch && clock >= hostileLaunch.at && !reduceMotion) {
@@ -1688,6 +1689,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
         else if (index === 2) tmp.addScaledVector(right, 0.9).addScaledVector(up, -0.35);
         else if (index === 3) tmp.addScaledVector(heading, -1.1).addScaledVector(up, -0.6);
         if (flight.chasing) tmp.addScaledVector(right, 0.35 * Math.sin(clock * 2.2 + index * 2)).addScaledVector(up, 0.25 * Math.cos(clock * 1.7 + index));
+        if (escort) escort(fighter, tmp, heading, up, flight, index); // [r3:pilot] passes bent toward the player's jewel
         fighter.group.position.copy(tmp);
         if (env.bend) env.bend(fighter.group.position); // [r3:environment]
         fighter.group.scale.setScalar(0.55);
@@ -1749,6 +1751,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     scenario, sides, visits,
     capitals, fighters: allFighters, env, // [r3:environment]
     pass, zoneAt, // [r3:gunnery] for the sensors: the fighters' passes, and where a point lands on a hull
+    escort: (hook) => { escort = hook; }, // [r3:pilot]
   };
 
   return {

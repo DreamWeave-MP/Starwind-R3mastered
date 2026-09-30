@@ -377,6 +377,13 @@
   left: 0
   margin-top: 3.3rem
   color: var(--dw-warn)
+// [r3:pilot] A capital ship acknowledging the visitor's jewel as it passes: its brackets flare twice
+// and a line of IFF reads under its class.
+.r3-contact__hail
+  position: absolute
+  top: 100%
+  left: 0
+  margin-top: 1.3rem
   font-family: var(--dw-font-mono)
   font-size: .56rem
   letter-spacing: .14em
@@ -388,6 +395,27 @@
 
   &.is-shown
     opacity: 1
+  color: color-mix(in oklab, var(--dw-accent) 70%, white)
+  text-shadow: 0 0 6px rgb(0 0 0 / 90%)
+  opacity: 0
+  transition: opacity .5s ease
+
+.r3-contact.is-hailing
+  animation: r3-hail 1.3s ease-out 2
+
+  .r3-contact__hail
+    opacity: .9
+
+  @media (prefers-reduced-motion: reduce)
+    animation: none
+
+@keyframes r3-hail
+  0%
+    filter: none
+  25%
+    filter: brightness(1.8) drop-shadow(0 0 5px currentColor)
+  100%
+    filter: none
 
 // A solar system's world under the pointer, named for the jump a click will make.
 .r3-waypoint
