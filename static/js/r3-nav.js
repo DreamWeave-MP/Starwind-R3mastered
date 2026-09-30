@@ -4,7 +4,7 @@
 // The survey readout's SURVEY word or world name opens the chart; Escape or a click on empty
 // space closes it, and a click on an earlier stop jumps back there. Every visit is kept as the
 // recipe r3-hero.js replays it from: world and seed, backdrop and seed, frame, and the fleet's
-// sides. A world or backdrop marked `unlisted` is never charted, never a stop to jump back to, and
+// sides (both of them at war, since a side may fight in more than one era). A world or backdrop marked `unlisted` is never charted, never a stop to jump back to, and
 // never written into a permalink.
 import { guideFor } from './r3-guide.js';
 
@@ -40,11 +40,11 @@ function write(chart) {
 
 // Where a stop sits on the chart: out from the core by its region, round by its name, turned a little
 // further the farther out it is, so the stops follow the arms.
-function place(stop) {
+function place(stop, depth = 46) {
   const region = String(stop.note || '').split('·')[0].trim().toLowerCase();
   const reach = REGIONS[region] ?? 0.45 + 0.45 * hash(`${stop.label}/reach`);
   const angle = hash(stop.label) * Math.PI * 2 + reach * 2.4;
-  return { x: Math.cos(angle) * reach * 92, y: Math.sin(angle) * reach * 46 };
+  return { x: Math.cos(angle) * reach * 92, y: Math.sin(angle) * reach * depth };
 }
 
 function element(name, attributes = {}, parent = null) {
@@ -58,6 +58,8 @@ export function createNav({ stage, survey, jumpTo, live = () => ({}), reduceMoti
   let chart = read();
   let current = null;
   let open = null;
+  // While the chart is up it redraws when the stage changes size, so its lettering keeps its size.
+  const resized = typeof ResizeObserver === 'function' ? new ResizeObserver(() => { if (open) render(); }) : null;
 
   // The permalink's query: enough for pickWorld, pickVista and pickScenario to draw the same scene.
   function permalink(recipe) {
@@ -168,6 +170,7 @@ export function createNav({ stage, survey, jumpTo, live = () => ({}), reduceMoti
     setTimeout(() => root.remove(), reduceMotion ? 0 : 220);
     window.removeEventListener('keydown', onKey);
     document.removeEventListener('pointerdown', onOutside, true);
+    if (resized) resized.disconnect();
   }
 
   // A press anywhere outside the chart closes it and carries on to what it pressed; the readout's
@@ -213,6 +216,7 @@ export function createNav({ stage, survey, jumpTo, live = () => ({}), reduceMoti
     requestAnimationFrame(() => root.classList.add('is-open'));
     window.addEventListener('keydown', onKey);
     document.addEventListener('pointerdown', onOutside, true);
+    if (resized) resized.observe(stage);
   }
 
   function render() {
@@ -235,23 +239,28 @@ export function createNav({ stage, survey, jumpTo, live = () => ({}), reduceMoti
     // The map keeps the galaxy's proportions and fits the stage; labels, dots and lines keep one
     // on-screen size whatever that scale is (u: one screen pixel, in the map's units).
     const box = root.getBoundingClientRect();
-    const scale = Math.max(0.3, Math.min(box.width / 200, Math.max(40, box.height - 70) / 108));
+    // The galaxy is seen tilted: flat across a wide stage, rounder on a tall one, so a phone's map
+    // fills its stage. depth is the disc's half-height for its half-width of 92, half is the map's.
+    const room = Math.max(40, box.height - 70) / Math.max(1, box.width);
+    const depth = Math.min(92, Math.max(46, 92 * room * 0.95));
+    const half = depth + 8;
+    const scale = Math.max(0.3, Math.min(box.width / 200, Math.max(40, box.height - 70) / (half * 2)));
     const u = 1 / scale;
     const compact = box.width < 600;
-    const svg = element('svg', { class: 'r3-chart__map', viewBox: '-100 -54 200 108', preserveAspectRatio: 'xMidYMid meet' });
+    const svg = element('svg', { class: 'r3-chart__map', viewBox: `-100 ${(-half).toFixed(2)} 200 ${(half * 2).toFixed(2)}`, preserveAspectRatio: 'xMidYMid meet' });
     const defs = element('defs', {}, svg);
     const glow = element('radialGradient', { id: 'r3-chart-core' }, defs);
     element('stop', { offset: '0', 'stop-color': 'currentColor', 'stop-opacity': '0.55' }, glow);
     element('stop', { offset: '0.45', 'stop-color': 'currentColor', 'stop-opacity': '0.16' }, glow);
     element('stop', { offset: '1', 'stop-color': 'currentColor', 'stop-opacity': '0' }, glow);
     // The galaxy: a glow at the core, four arms, and the regions' rings, named along the bottom.
-    element('ellipse', { class: 'r3-chart__core', cx: 0, cy: 0, rx: 34, ry: 17, fill: 'url(#r3-chart-core)' }, svg);
+    element('ellipse', { class: 'r3-chart__core', cx: 0, cy: 0, rx: 34, ry: 34 * depth / 92, fill: 'url(#r3-chart-core)' }, svg);
     for (let arm = 0; arm < 4; arm++) {
       const points = [];
       for (let i = 0; i <= 48; i++) {
         const reach = 0.08 + (i / 48) * 0.9;
         const angle = arm * Math.PI / 2 + reach * 2.4;
-        points.push(`${(Math.cos(angle) * reach * 92).toFixed(2)},${(Math.sin(angle) * reach * 46).toFixed(2)}`);
+        points.push(`${(Math.cos(angle) * reach * 92).toFixed(2)},${(Math.sin(angle) * reach * depth).toFixed(2)}`);
       }
       // A soft band with a bright spine, so an arm reads as a lane of stars rather than a stroke.
       element('polyline', { class: 'r3-chart__arm', points: points.join(' '), 'stroke-width': (18 * u).toFixed(2) }, svg);
@@ -262,7 +271,7 @@ export function createNav({ stage, survey, jumpTo, live = () => ({}), reduceMoti
     const taken = [];
     const overlaps = (box) => taken.some((other) => box.x0 < other.x1 && box.x1 > other.x0 && box.y0 < other.y1 && box.y1 > other.y0);
     // Stops too close to tell apart are eased apart: a few rounds of pushing each pair to 16 pixels.
-    const positions = new Map(unique.map((id) => [id, place(chart.nodes[id])]));
+    const positions = new Map(unique.map((id) => [id, place(chart.nodes[id], depth)]));
     const apart = 16 * u;
     for (let round = 0; round < 8; round++) {
       let moved = false;
@@ -271,7 +280,7 @@ export function createNav({ stage, survey, jumpTo, live = () => ({}), reduceMoti
         const pa = positions.get(a);
         const pb = positions.get(b);
         let dx = pb.x - pa.x;
-        let dy = (pb.y - pa.y) * 2;
+        let dy = pb.y - pa.y;
         let gap = Math.hypot(dx, dy);
         if (gap >= apart) continue;
         if (gap < 1e-6) {
@@ -280,8 +289,8 @@ export function createNav({ stage, survey, jumpTo, live = () => ({}), reduceMoti
           gap = 1;
         }
         const push = (apart - gap) / 2 / gap;
-        pa.x -= dx * push; pa.y -= (dy / 2) * push;
-        pb.x += dx * push; pb.y += (dy / 2) * push;
+        pa.x -= dx * push; pa.y -= dy * push;
+        pb.x += dx * push; pb.y += dy * push;
         moved = true;
       }
       if (!moved) break;
@@ -291,14 +300,14 @@ export function createNav({ stage, survey, jumpTo, live = () => ({}), reduceMoti
       return at.x + 6 * u > box.x0 && at.x - 6 * u < box.x1 && at.y + 6 * u > box.y0 && at.y - 6 * u < box.y1;
     });
     for (const [name, reach] of [['Core', 0.15], ['Inner Rim', 0.35], ['Mid Rim', 0.58], ['Outer Rim', 0.78], ['Wild Space', 0.95]]) {
-      element('ellipse', { class: 'r3-chart__ring', cx: 0, cy: 0, rx: reach * 92, ry: reach * 46, 'stroke-width': (0.8 * u).toFixed(3), 'stroke-dasharray': `${(2 * u).toFixed(2)} ${(4 * u).toFixed(2)}` }, svg);
+      element('ellipse', { class: 'r3-chart__ring', cx: 0, cy: 0, rx: reach * 92, ry: reach * depth, 'stroke-width': (0.8 * u).toFixed(3), 'stroke-dasharray': `${(2 * u).toFixed(2)} ${(4 * u).toFixed(2)}` }, svg);
       // A ring's name sits on its bottom edge, or on its top where a stop is in the way.
-      const half = name.length * 3.2 * u;
-      let y = reach * 46 + 3.4 * u;
-      if (near({ x0: -half, x1: half, y0: y - 7 * u, y1: y + 1 * u })) y = -reach * 46 + 3.4 * u;
+      const width = name.length * 3.2 * u;
+      let y = reach * depth + 3.4 * u;
+      if (near({ x0: -width, x1: width, y0: y - 7 * u, y1: y + 1 * u })) y = -reach * depth + 3.4 * u;
       const tag = element('text', { class: 'r3-chart__region', x: 0, y: y.toFixed(2), 'font-size': (8 * u).toFixed(2), 'text-anchor': 'middle' }, svg);
       tag.textContent = name;
-      taken.push({ x0: -half, x1: half, y0: y - 7 * u, y1: y + 1 * u });
+      taken.push({ x0: -width, x1: width, y0: y - 7 * u, y1: y + 1 * u });
     }
 
     if (stops.length > 1) {
@@ -352,7 +361,7 @@ export function createNav({ stage, survey, jumpTo, live = () => ({}), reduceMoti
       // The first slot that is free, or failing that the one that overlaps least.
       // A slot past the map's edge counts as overlap too, by the part outside.
       const edgeX = Math.max(100, (box.width / scale) / 2 - 4 * u);
-      const outside = (b) => (Math.max(0, -54 - b.y0) + Math.max(0, b.y1 - 54)) * (b.x1 - b.x0) + (Math.max(0, -edgeX - b.x0) + Math.max(0, b.x1 - edgeX)) * (b.y1 - b.y0);
+      const outside = (b) => (Math.max(0, -half - b.y0) + Math.max(0, b.y1 - half)) * (b.x1 - b.x0) + (Math.max(0, -edgeX - b.x0) + Math.max(0, b.x1 - edgeX)) * (b.y1 - b.y0);
       const area = (b) => outside(b) + taken.reduce((sum, other) => sum + Math.max(0, Math.min(b.x1, other.x1) - Math.max(b.x0, other.x0)) * Math.max(0, Math.min(b.y1, other.y1) - Math.max(b.y0, other.y0)), 0);
       let chosen = null;
       let least = Infinity;
