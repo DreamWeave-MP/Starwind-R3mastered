@@ -604,6 +604,8 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
   const picked = forcedScenario || pickScenario(random);
   const seeded = !!(memory && memory.seeded && !forcedScenario);
   const steerable = !!forcedScenario || seeded || !new URLSearchParams(location.search).has('fleet');
+  // [r3:qa] Test only: ?fleet_now=1 brings the fleet in at once, for screenshots and loop tests.
+  const fleetNow = new URLSearchParams(location.search).has('fleet_now');
   const scenario = steerable ? steerScenario(picked, memory, random, ERAS, { force: seeded }) : picked;
   const sides = scenario.sides.map((key) => ({ key, ...FACTIONS[key], stance: memory ? memory.stance(key) : null }));
 
@@ -941,7 +943,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
   // phone, and on patrol, one at a time.
   function makeVisit(slot) {
     return {
-      slot, state: 'waiting', until: reduceMotion ? 0 : 2.5 + slot * 7, age: 0, ship: null,
+      slot, state: 'waiting', until: reduceMotion ? 0 : fleetNow ? 0.05 + slot * 0.4 : 2.5 + slot * 7, age: 0, ship: null,
       start: new THREE.Vector3(), velocity: new THREE.Vector3(), heading: new THREE.Vector3(), up: new THREE.Vector3(), position: new THREE.Vector3(),
       length: 1, cruise: 30, contact: makeContact(), rect: null, blasts: 0, shield: 1, hull: 0, nextVolley: 0, fleeing: false,
       // [r3:gunnery] Subsystem damage, 0 to 3 each, and the fire and secondaries it causes.
@@ -1021,7 +1023,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
 
   // The fighters' passes: a patrol of one side, at war a dogfight, one side chased by the other, and
   // while capital ships are in the sky, a pair launching from a hangar.
-  const pass = { active: false, age: 0, duration: 3.4, next: reduceMotion ? Infinity : 5 + random() * 4, points: [], flights: [] };
+  const pass = { active: false, age: 0, duration: 3.4, next: reduceMotion ? Infinity : fleetNow ? 0.3 : 5 + random() * 4, points: [], flights: [] };
   function pairOf(side) {
     const kind = side.fighters[Math.floor(random() * side.fighters.length)];
     return pools.get(`${side.key}:${kind}`);
@@ -1461,7 +1463,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
         ship.group.visible = false;
         visit.contact.element.classList.remove('is-locked', 'is-lost');
         visit.state = 'waiting';
-        visit.until = clock + 3.5 + random() * 3;
+        visit.until = clock + (fleetNow ? 0.3 : 3.5 + random() * 3);
         if (visit.struckByViewer) recordKill(ship.side, true); // [r3:qa] once, at destruction
         visit.struckByViewer = false;
         for (const listener of listeners.destroyed) listener({ position: position.clone(), length: visit.length, quaternion: ship.group.quaternion.clone(), velocity: visit.velocity.clone(), side: ship.side, material: ship.material });
