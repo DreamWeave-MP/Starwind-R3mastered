@@ -1557,6 +1557,8 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
         shot.age = -i * 0.12;
       }
       incoming.push(clock + distanceTo(visit) / 26 + 0.1);
+      // [r3:qa] and splashes on the jewel's shield, from the ship's side.
+      if (struck) struck(aim.copy(player.point).sub(visit.position).normalize(), distanceTo(visit) / 26 + 0.1);
       visit.nextVolley = clock + 2.4 + random() * 1.6;
     }
     while (incoming.length && clock >= incoming[0]) {
@@ -1625,6 +1627,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
   }
 
   // [r3:memory] A fighter's shot at a point: the viewer's jewel, a little off.
+  let struck = null; // [r3:qa] set by the pilot: (direction toward the target, delay) => a splash on its shield
   function fireAt(fighter, point) {
     fighter.group.updateMatrixWorld(true);
     const cannons = fighter.design.cannons;
@@ -1635,7 +1638,10 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     aim.normalize();
     aim.x += (random() - 0.5) * 0.08;
     aim.y += (random() - 0.5) * 0.08;
-    bolt(start, aim.normalize(), { speed: 48, length: 0.5, life: 0.6, color: linear(fighter.side.laser) });
+    aim.normalize();
+    bolt(start, aim, { speed: 48, length: 0.5, life: 0.6, color: linear(fighter.side.laser) });
+    const reach = start.distanceTo(point);
+    if (struck && reach < 48 * 0.6) struck(aim, reach / 48); // [r3:qa] it lands inside the bolt's life
   }
 
   function updateBolts(dt) {
@@ -1779,6 +1785,7 @@ export function createFleet({ scene, camera, time, sunDir, sunColor, air, reduce
     capitals, fighters: allFighters, env, // [r3:environment]
     pass, zoneAt, // [r3:gunnery] for the sensors: the fighters' passes, and where a point lands on a hull
     escort: (hook) => { escort = hook; }, // [r3:pilot]
+    struck: (hook) => { struck = hook; }, // [r3:qa] the pilot's shield, for shots aimed at the jewel
   };
 
   return {

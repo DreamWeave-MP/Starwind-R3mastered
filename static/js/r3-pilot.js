@@ -128,6 +128,7 @@ export function createPilot({ hero, scene, camera, getFleet, jewelPx, starVeloci
   const scratch = new THREE.Vector3();
   const toJewel = new THREE.Vector3();
   const pending = [];
+  let shieldHits = 0;
   let jewelScale = 1;
 
   // What the fighters are up to with the jewel: one buzzing it, a pair formed up on it, or a hostile
@@ -147,6 +148,9 @@ export function createPilot({ hero, scene, camera, getFleet, jewelPx, starVeloci
     acknowledged.clear();
     nextHail = kit.now() + 5;
     if (kit.escort) kit.escort(bendPass);
+    // [r3:qa] Fire that the fleet aims at the jewel (a navy with a grudge) splashes on its shield
+    // too: a unit direction from the jewel toward the shooter, landing after a delay in seconds.
+    if (kit.struck) kit.struck((direction, delay) => pending.push({ at: kit.now() + delay, x: -direction.x, y: -direction.y, z: -direction.z }));
   }
 
   // Presses: a press on the jewel is the pilot's. A click (no drag) still calls the fleet; a drag
@@ -434,6 +438,7 @@ export function createPilot({ hero, scene, camera, getFleet, jewelPx, starVeloci
     for (let i = pending.length - 1; i >= 0; i--) {
       if (now < pending[i].at) continue;
       const hit = pending.splice(i, 1)[0];
+      shieldHits += 1;
       shieldUniforms.uHit.value.set(hit.x, hit.y, hit.z).normalize();
       shieldUniforms.uFlare.value = 1;
       shieldUniforms.uAge.value = 0;
@@ -491,6 +496,7 @@ export function createPilot({ hero, scene, camera, getFleet, jewelPx, starVeloci
     get bank() { return bank; },
     get lean() { return lean; },
     get flying() { return mode !== 'drift'; },
+    get shieldHits() { return shieldHits; }, // [r3:qa] for tests: splashes so far
     dispose() {
       scene.remove(glow);
       scene.remove(shield);
