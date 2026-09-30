@@ -16,15 +16,15 @@
 // survives unchanged, while a band of light sweeps across it. A click on it spins it at once.
 //
 // The scene renders to a half-float target; a bright pass and blurs make the bloom, and the
-// composite adds the sun's flare, tone-maps (ACES), darkens the side the text is on, vignettes and
-// dithers. Any NaN or infinity is zeroed before the bloom can spread it. Colours come from the
+// composite adds the sun's flare, tone-maps (ACES), vignettes and dithers. Any NaN or infinity is zeroed before the bloom can spread it. Colours come from the
 // site's CSS tokens, so sass/brand.sass stays their owner. The canvas waits until the hero is on
 // screen, stops when the tab is hidden or the hero scrolls away, lowers its resolution when frames
 // run slow, and under prefers-reduced-motion draws still frames. Without WebGL 2, or after the
 // context is lost, the still in sass/brand.sass stays.
 //
 // The template loads this module through [extra.hero] in config.toml and gives the hero an empty
-// [data-dw-hero-art] behind the text, which the canvas fills.
+// [data-dw-hero-art], which the canvas fills. brand.sass makes it a stage of its own, between the
+// text above and the survey readout and the facts below, so nothing of the page sits over it.
 
 import * as THREE from './vendor/three.module.min.js';
 import { pickWorld, WORLDS } from './r3-worlds.js';
@@ -348,7 +348,7 @@ const SKY_FRAGMENT = /* glsl */ `
     // At the heat death each star goes out at its own moment, flaring as it goes, the last red.
     float death = hash21(id + 23.7);
     float alive = smoothstep(uDying - 0.004, uDying + 0.004, death);
-    float going = uDying > 0.0 ? exp(-pow((death - uDying) * 160.0, 2.0)) : 0.0;
+    float going = uDying > 0.0 ? exp(-pow(abs(death - uDying) * 160.0, 2.0)) : 0.0;
     tint = mix(tint, vec3(1.0, 0.42, 0.28), smoothstep(0.35, 0.9, uDying));
     float bright = step(0.3, h) * spikes;
     float spike = bright * (exp(-abs(d.y) * 1.6) * exp(-abs(d.x) * 0.16) + exp(-abs(d.x) * 1.6) * exp(-abs(d.y) * 0.16));
@@ -689,14 +689,14 @@ const JEWEL_FRAGMENT = /* glsl */ `
   }
 
   void main() {
-    vec3 n = normalize(vNormal);
+    vec3 n = vNormal * inversesqrt(max(dot(vNormal, vNormal), 1e-8));
     vec3 v = uCamera - vWorld;
     float vl = length(v);
     v = vl > 1e-5 ? v / vl : vec3(0.0, 0.0, 1.0);
     if (dot(n, v) < 0.0) n = -n;
     vec3 r = reflect(-v, n);
     float facing = max(dot(n, v), 0.0);
-    float fresnel = 0.06 + 0.94 * pow(1.0 - facing, 5.0);
+    float fresnel = 0.06 + 0.94 * pow(max(1.0 - facing, 0.0), 5.0);
 
     vec3 chrome = mix(vec3(0.86, 0.95, 1.0), uAccent, 0.18);
     vec3 col = environment(r) * mix(chrome, vec3(1.0), fresnel);
@@ -728,7 +728,7 @@ const JEWEL_FRAGMENT = /* glsl */ `
     col *= 1.0 - 0.45 * edge.y;
     col += mix(vec3(1.0), uAccent, 0.2) * edge.z * (0.8 + 1.6 * fresnel);
     col += uAccent * edge.x * 1.4;
-    col += uAccent * pow(1.0 - facing, 3.0) * 0.4;
+    col += uAccent * pow(max(1.0 - facing, 0.0), 3.0) * 0.4;
     gl_FragColor = vec4(col, 1.0);
   }
 `;
@@ -777,7 +777,6 @@ const COMPOSITE_FRAGMENT = /* glsl */ `
   uniform vec3 uAccent;
   uniform vec2 uGlintPx;
   uniform float uGlint;
-  uniform vec4 uText;        // the text's box in uv: left, bottom, right, top
   uniform vec3 uPlanetPx;    // the planet's centre and radius, device pixels
   uniform vec2 uFlashPx;     // a ship's hyperspace flash, device pixels
   uniform float uFlash;
@@ -836,14 +835,11 @@ const COMPOSITE_FRAGMENT = /* glsl */ `
     vec3 glint = fourPoint(g, 38.0, 0.9, 3.0);
     color += vec3(0.9, 1.0, 1.0) * (glint.x * 1.4 + glint.y * 2.5) * uGlint;
 
-    // Keep the text readable: darken softly behind its box.
-    vec2 inside = smoothstep(uText.xy - vec2(0.08, 0.1), uText.xy + vec2(0.02, 0.05), vUv) * (1.0 - smoothstep(uText.zw - vec2(0.02, 0.05), uText.zw + vec2(0.12, 0.12), vUv));
-    color *= 1.0 - 0.38 * inside.x * inside.y;
 
     vec2 v = vUv - 0.5;
     color *= 1.0 - dot(v, v) * 0.7;
     color = aces(color * 1.05);
-    color = pow(color, vec3(1.0 / 2.2));
+    color = pow(max(color, vec3(0.0)), vec3(1.0 / 2.2));
     color = mix(color, vec3(0.92, 0.97, 1.0), uWhite);
     color += dither(gl_FragCoord.xy) / 255.0;
     gl_FragColor = vec4(color, 1.0);
@@ -928,23 +924,10 @@ function fullscreenMaterial(fragmentShader, uniforms) {
   return new THREE.ShaderMaterial({ vertexShader: FULLSCREEN_VERTEX, fragmentShader, uniforms, depthTest: false, depthWrite: false });
 }
 
-function textBox(hero) {
-  const box = { left: Infinity, top: Infinity, right: -Infinity, bottom: -Infinity };
-  const range = document.createRange();
-  for (const element of hero.querySelectorAll('.dw-kicker, .dw-hero__title, .dw-hero__summary, .dw-actions, .dw-command')) {
-    range.selectNodeContents(element);
-    for (const rect of range.getClientRects()) {
-      if (rect.width < 1 || rect.height < 1) continue;
-      box.left = Math.min(box.left, rect.left);
-      box.top = Math.min(box.top, rect.top);
-      box.right = Math.max(box.right, rect.right);
-      box.bottom = Math.max(box.bottom, rect.bottom);
-    }
-  }
-  return Number.isFinite(box.left) ? box : null;
-}
-
 function start(hero, art) {
+  // [r3:stage] The simulation has a band of its own between the text and the facts (brand.sass): every
+  // pointer and screen coordinate is measured on it, and nothing else of the page sits over it.
+  const stage = art || hero;
   const canvas = document.createElement('canvas');
   let renderer;
   try {
@@ -995,7 +978,7 @@ function start(hero, art) {
   survey.className = 'r3-survey';
   survey.setAttribute('aria-hidden', 'true');
   survey.title = 'Jump to hyperspace';
-  (art || hero).append(survey);
+  hero.append(survey); // [r3:stage] its own band under the stage, beside the facts (brand.sass)
   function showSurvey() {
     survey.replaceChildren();
     const name = vista.kind === 'planet' ? world.name : vista.name;
@@ -1158,7 +1141,6 @@ function start(hero, art) {
     uAccent: { value: accent },
     uGlintPx: { value: new THREE.Vector2() },
     uGlint: { value: 0 },
-    uText: { value: new THREE.Vector4(-2, -2, -2, -2) },
     uPlanetPx: { value: new THREE.Vector3(0, 0, 1) },
     uFlashPx: { value: new THREE.Vector2(-1e4, -1e4) },
     uFlash: { value: 0 },
@@ -1181,9 +1163,7 @@ function start(hero, art) {
     pass(blurMaterial, target);
   }
 
-  // Layout. On a wide screen the jewel stands in the space right of the text, above the planet's
-  // rising limb; where that space is too narrow it hangs small in the top right corner, and the
-  // planet sinks lower, so the stacked text keeps the sky behind it quiet.
+  // Layout, on the stage: the whole of it is sky. On a phone the planet spans its foot.
   let width = 1;
   let height = 1;
   let ratio = 1;
@@ -1213,7 +1193,7 @@ function start(hero, art) {
   let jewelScale = 1;
 
   function layout() {
-    const bounds = hero.getBoundingClientRect();
+    const bounds = stage.getBoundingClientRect();
     width = Math.max(1, Math.round(bounds.width));
     height = Math.max(1, Math.round(bounds.height));
     ratio = Math.min(window.devicePixelRatio || 1, width * height > 1.4e6 ? 1.25 : 1.5) * quality;
@@ -1235,8 +1215,7 @@ function start(hero, art) {
     compositeUniforms.uRatio.value = ratio;
     compositeUniforms.uResolution.value.set(w, h);
 
-    const text = textBox(hero);
-    const textRight = text ? text.right - bounds.left : 0;
+    const textRight = 0; // [r3:stage] the text has its own band; nothing on the stage to keep clear of
     const shellRight = Math.min(width, width / 2 + 760);
     const free = shellRight - textRight;
     narrow = width < 761 || free < 360;
@@ -1255,10 +1234,9 @@ function start(hero, art) {
     if (narrow) {
       planet.radius = Math.max(width * 1.05, 420);
       planet.x = width * 0.62;
-      planet.y = -planet.radius + height * 0.15;
+      planet.y = -planet.radius + height * 0.26; // [r3:stage] the stage is the phone's to itself
     } else {
-      // The framing picked for this load (r3-worlds.js). Every one keeps the disc clear of the
-      // text: where it reaches the hero's foot, it does so right of the text column.
+      // The framing picked for this load (r3-worlds.js).
       const frame = world.frame;
       let crown;
       if (frame.kind === 'shoulder') {
@@ -1274,8 +1252,7 @@ function start(hero, art) {
       } else if (frame.kind === 'close') {
         planet.radius = Math.max(width * 0.9, 1100) * (0.9 + 0.3 * frame.size);
         planet.x = textRight + free * (0.45 + 0.2 * frame.at);
-        const reach = planet.x - (textRight + 60);
-        crown = Math.min(height * (0.22 + 0.12 * frame.lift), planet.radius - Math.sqrt(Math.max(0, planet.radius * planet.radius - reach * reach)));
+        crown = height * (0.22 + 0.12 * frame.lift); // [r3:stage] no text column for the limb to clear
       } else {
         planet.radius = Math.max(width * 0.36, 480) * (0.85 + 0.3 * frame.size);
         planet.x = textRight + free * (0.42 + 0.2 * frame.at);
@@ -1284,7 +1261,7 @@ function start(hero, art) {
       planet.y = -planet.radius + Math.max(crown, 40);
     }
     // The free sky, where a backdrop other than a planet stands: css pixels, y down.
-    freeRegion = [narrow ? width * 0.42 : textRight + 50, 18, width - 18, height - 18];
+    freeRegion = [narrow ? 18 : textRight + 50, 18, width - 18, height - 18]; // [r3:stage]
     if (!planetLike()) {
       planet.x = -1e5;
       planet.y = -1e5;
@@ -1293,18 +1270,17 @@ function start(hero, art) {
     skyUniforms.uSkySize.value.set(width * ratio, height * ratio);
     skyUniforms.uPlanet.value.set(planet.x * ratio, planet.y * ratio, planet.radius * ratio);
     // The sun rises at a point round the limb picked for this visit (r3-worlds.js): anywhere the
-    // limb is in view, clear of the text and the hero's edges.
+    // limb is in view, clear of the stage's edges.
     const candidates = [];
     for (let degree = 0; degree < 360; degree += 2) {
       const angle = (degree * Math.PI) / 180;
       const x = planet.x + Math.sin(angle) * planet.radius;
       const y = height - (planet.y + Math.cos(angle) * planet.radius);
       if (x < 40 || x > width - 40 || y < 30 || y > height - 16) continue;
-      if (text && x > text.left - bounds.left - 60 && x < text.right - bounds.left + 60 && y > text.top - bounds.top - 50 && y < text.bottom - bounds.top + 50) continue;
       candidates.push(angle);
     }
     sunAngle = candidates.length ? candidates[Math.floor(world.sunAt * candidates.length) % candidates.length] : 0;
-    // Small moons in the free sky above the planet, clear of the text.
+    // Small moons in the free sky above the planet.
     const skyLeft = narrow ? width * 0.55 : Math.max(textRight + 60, width * 0.5);
     [skyUniforms.uMoonA.value, skyUniforms.uMoonB.value].forEach((moonValue, i) => {
       const [a, b, c] = world.moonSeeds.slice(i * 3, i * 3 + 3);
@@ -1318,21 +1294,10 @@ function start(hero, art) {
       const y = THREE.MathUtils.clamp(height * (0.08 + c * 0.4), moonRadius + 8, Math.max(moonRadius + 8, crown - moonRadius - 20));
       moonValue.set(x * ratio, (height - y) * ratio, moonRadius * ratio, a);
     });
-    // The survey readout sits under the text column, where the planet never reaches; on a phone
-    // the planet spans the foot of the hero, so it goes to the top corner instead (brand.sass).
-    survey.style.left = narrow || !text ? '' : `${Math.round(text.left - bounds.left)}px`;
-    if (text) {
-      compositeUniforms.uText.value.set(
-        (text.left - bounds.left) / width,
-        1 - (text.bottom - bounds.top) / height,
-        (text.right - bounds.left) / width,
-        1 - (text.top - bounds.top) / height,
-      );
-    }
 
     fleet.layout({ width, height, free: textRight, narrow, ratio });
     // Hyperspace opens in the middle of the free sky.
-    skyUniforms.uHyperAt.value.set(((narrow ? width * 0.6 : (textRight + width) / 2)) * ratio, height * 0.55 * ratio);
+    skyUniforms.uHyperAt.value.set((width / 2) * ratio, height * 0.5 * ratio); // [r3:stage] the stage's centre
     perPixel = (2 * camera.position.z * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))) / height;
     jewelScale = jewelPx.radius * perPixel;
     anchor.set((jewelPx.x - width / 2) * perPixel, (height / 2 - jewelPx.y) * perPixel, 0);
@@ -1343,7 +1308,7 @@ function start(hero, art) {
   // leading a jump, and has the sky notice it.
   const hyperPoint = { x: 0, y: 0 };
   const pilot = createPilot({
-    hero, scene, camera, jewelPx, starVelocity, reduceMotion, overText, overJewel, requestFrame,
+    hero, stage, scene, camera, jewelPx, starVelocity, reduceMotion, overText, overJewel, requestFrame,
     getFleet: () => fleet,
     jumping: () => jump.active,
     accent,
@@ -1369,9 +1334,11 @@ function start(hero, art) {
   let spinFrom = 0;
   let nextSpin = reduceMotion ? Infinity : 7;
   function onPointer(event) {
-    const bounds = hero.getBoundingClientRect();
+    const bounds = stage.getBoundingClientRect();
+    // [r3:stage] Over the text or the facts, the pointer has left the sky.
+    const offStage = event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom;
     pointer.set(((event.clientX - bounds.left) / bounds.width) * 2 - 1, -((event.clientY - bounds.top) / bounds.height) * 2 + 1);
-    pointerActive = true;
+    pointerActive = !offStage;
     lastPointer = performance.now();
     if (reduceMotion) requestFrame();
   }
@@ -1381,7 +1348,7 @@ function start(hero, art) {
     if (reduceMotion) requestFrame();
   }, { passive: true });
   hero.addEventListener('pointerdown', (event) => {
-    const bounds = hero.getBoundingClientRect();
+    const bounds = stage.getBoundingClientRect();
     if (!forArt(event, { x: event.clientX - bounds.left, y: event.clientY - bounds.top })) {
       event.r3Taken = true;
       return;
@@ -1424,7 +1391,7 @@ function start(hero, art) {
   const axisX = new THREE.Vector3(1, 0, 0);
   const planetDrag = { active: false, id: -1, lastX: 0, lastY: 0, vx: 0, vy: 0 };
   function heroPoint(event) {
-    const bounds = hero.getBoundingClientRect();
+    const bounds = stage.getBoundingClientRect();
     return { x: event.clientX - bounds.left, y: event.clientY - bounds.top };
   }
   function overJewel(point) {
@@ -1432,32 +1399,13 @@ function start(hero, art) {
     const dy = point.y - jewelPx.y;
     return dx * dx + dy * dy <= (jewelPx.radius * 1.6) ** 2;
   }
-  // Whether a point of the hero is on its text: a word, a button, the strip. The text column's box
-  // spans the whole hero, so its target says nothing; the boxes of what it actually shows do. A
-  // pointer there acts on the page, never on the art behind. Measured again at most twice a second.
-  let textRects = [];
-  let textMeasured = -Infinity;
+  // [r3:stage] Whether a point is off the stage: the text and the facts have bands of their own, so
+  // a pointer anywhere on the stage is the simulation's, and anywhere else is the page's.
   function overText(point) {
-    const now = performance.now();
-    if (now - textMeasured > 500) {
-      textMeasured = now;
-      const bounds = hero.getBoundingClientRect();
-      const range = document.createRange();
-      textRects = [];
-      const add = (rect) => {
-        if (rect.width < 1 || rect.height < 1) return;
-        textRects.push({ left: rect.left - bounds.left - 6, top: rect.top - bounds.top - 4, right: rect.right - bounds.left + 6, bottom: rect.bottom - bounds.top + 4 });
-      };
-      for (const element of hero.querySelectorAll('.dw-kicker, .dw-hero__title, .dw-hero__summary, .dw-command')) {
-        range.selectNodeContents(element);
-        for (const rect of range.getClientRects()) add(rect);
-      }
-      for (const element of hero.querySelectorAll('.dw-actions > *, .dw-strip, .dw-hero__figure, .dw-hero__text img')) add(element.getBoundingClientRect());
-    }
-    return textRects.some((rect) => point.x >= rect.left && point.x <= rect.right && point.y >= rect.top && point.y <= rect.bottom);
+    return point.x < 0 || point.y < 0 || point.x > width || point.y > height;
   }
   // What a pointer event may do to the art: nothing from a secondary button, a link, the survey
-  // readout (which has its own click) or the text.
+  // readout (which has its own click), or anything off the stage.
   function forArt(event, point) {
     if (!event.isPrimary || event.button > 0) return false;
     if (event.target.closest('a, button, input, summary, [role="button"], .r3-survey')) return false;
@@ -1537,9 +1485,10 @@ function start(hero, art) {
   hero.addEventListener('pointercancel', releasePlanet, { passive: true });
 
   // [r3:navigator] Dragging empty sky orbits the view about the planet (r3-camera.js): only a
-  // press that nothing else took, off the text, the jewel, the planet, the ships and the worlds.
+  // press on the stage that nothing else took: off the jewel, the planet, the ships and the worlds.
   const orbit = createOrbit({
     hero,
+    stage, // [r3:stage]
     reduceMotion,
     onMove: () => { if (reduceMotion) requestFrame(); },
     isFree: (point, event) => !event.r3Taken && !planetDrag.active && forArt(event, point) && !overText(point)
@@ -1902,16 +1851,13 @@ function start(hero, art) {
     const key = `${planet.x}|${planet.y}|${planet.radius}|${width}|${height}`;
     if (key !== faceState.placedFor) {
       faceState.placedFor = key;
-      // The visible disc: points of the hero on the planet and clear of the text, as normals.
-      const text = textBox(hero);
-      const bounds = hero.getBoundingClientRect();
+      // The visible disc: points of the stage on the planet, as normals.
       const centre = faceView.centre.set(0, 0, 0);
       const points = [];
       for (let i = 0; i <= 28; i++) {
         for (let j = 0; j <= 14; j++) {
           const x = (i / 28) * width;
           const yDown = (j / 14) * height;
-          if (text && x + bounds.left > text.left - 20 && x + bounds.left < text.right + 20 && yDown + bounds.top > text.top - 20 && yDown + bounds.top < text.bottom + 20) continue;
           const qx = (x - planet.x) / planet.radius;
           const qy = (height - yDown - planet.y) / planet.radius;
           const r2 = qx * qx + qy * qy;
@@ -1948,13 +1894,19 @@ function start(hero, art) {
       if (up.lengthSq() < 1e-6) up.set(0, 0, -1);
       up.normalize();
       right.crossVectors(up, centre).normalize();
-      let size = THREE.MathUtils.clamp(Math.min((rightmost - left) / 2 * 0.98, (high - low) / 2 * 1.1), 0.16, 0.9);
-      // A near-flat horizon shows only a band of the disc: there the face is large and peeks over
-      // it, eyes and brow above the line, the rest below.
-      if (high - low < 0.45 * (rightmost - left)) {
-        size = THREE.MathUtils.clamp((rightmost - left) * 0.32, 0.2, 0.9);
-        centre.addScaledVector(up, -(0.2 * size + (high - low) * 0.15)).normalize();
-        up.set(0, 1, 0).addScaledVector(centre, -centre.y).normalize();
+      // Fitted inside what shows, so no edge of the stage cuts it; the head fills 88% of its
+      // texture's height, which leaves a little room. A near-flat horizon shows only a band of the
+      // disc: there the band's height sets the size, and the face sits a little below the band's
+      // middle, since the limb above foreshortens it. [r3:stage]
+      const thin = high - low < 0.45 * (rightmost - left);
+      const size = thin
+        ? THREE.MathUtils.clamp((high - low) / 2, 0.04, 0.9)
+        : THREE.MathUtils.clamp(Math.min((rightmost - left) / 2, (high - low) / 2) * 1.04, 0.12, 0.9);
+      if (thin) {
+        centre.addScaledVector(up, -(high - low) * 0.03).normalize();
+        up.set(0, 1, 0).addScaledVector(centre, -centre.y);
+        if (up.lengthSq() < 1e-6) up.set(0, 0, -1);
+        up.normalize();
         right.crossVectors(up, centre).normalize();
       }
       const body = skyUniforms.uBody.value;
@@ -2075,7 +2027,7 @@ function start(hero, art) {
     if (nextVista.world) next = pickWorld({ fresh: true, name: nextVista.world });
     jump.world = next;
     jump.vista = nextVista;
-    if (jump.warm) jump.warm.material.dispose();
+    if (jump.warm) retireWarm(jump.warm);
     jump.warm = null;
     if (nextVista.index !== skyMaterial.defines.VISTA) {
       const material = skyMaterial.clone();
@@ -2084,9 +2036,15 @@ function start(hero, art) {
       mesh.frustumCulled = false;
       const warmScene = new THREE.Scene();
       warmScene.add(mesh);
-      renderer.compileAsync(warmScene, postCamera).catch(() => {});
+      mesh.userData.compiled = renderer.compileAsync(warmScene, postCamera).catch(() => {});
       jump.warm = mesh;
     }
+  }
+  // A warm-up material is disposed only once its compile has settled: three.js polls the program
+  // until it is ready, and a jump that lands at once (reduced motion) would pull it out from under
+  // the poll.
+  function retireWarm(mesh) {
+    Promise.resolve(mesh.userData.compiled).then(() => requestAnimationFrame(() => mesh.material.dispose()));
   }
   function swapWorld() {
     jump.swapped = true;
@@ -2098,9 +2056,8 @@ function start(hero, art) {
     jump.world = null;
     // The warm-up material held the new sky's program until the real one took it over.
     if (jump.warm) {
-      const warm = jump.warm;
+      retireWarm(jump.warm);
       jump.warm = null;
-      requestAnimationFrame(() => warm.material.dispose());
     }
     // [r3:memory] The jump and the new world are remembered before the new fleet reads the memory.
     memory.record('jump');

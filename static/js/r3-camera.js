@@ -11,7 +11,7 @@ const RETURN_AFTER = 9;       // seconds untouched before the view drifts home
 const RETURN_RATE = 0.35;     // how quickly it drifts home, per second
 const FLING_DECAY = 2.4;      // how quickly a release's spin fades, per second
 
-export function createOrbit({ hero, isFree, reduceMotion = false, onMove = () => {} }) {
+export function createOrbit({ hero, stage = hero, isFree, reduceMotion = false, onMove = () => {} }) {
   const state = { yaw: 0, pitch: 0, vyaw: 0, vpitch: 0, idle: Infinity, active: false };
   const quaternion = new THREE.Quaternion();
   const inverse = new THREE.Quaternion();
@@ -21,7 +21,7 @@ export function createOrbit({ hero, isFree, reduceMotion = false, onMove = () =>
   let drag = null;
 
   const point = (event) => {
-    const bounds = hero.getBoundingClientRect();
+    const bounds = stage.getBoundingClientRect(); // [r3:stage]
     return { x: event.clientX - bounds.left, y: event.clientY - bounds.top, width: bounds.width, height: bounds.height };
   };
 
