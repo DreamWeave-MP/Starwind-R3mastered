@@ -1273,8 +1273,11 @@ function start(hero, art) {
     if (reduceMotion) requestFrame();
   }, { passive: true });
   hero.addEventListener('pointerdown', (event) => {
-    if (event.target.closest('a, button, input, summary, [role="button"]')) return;
     const bounds = hero.getBoundingClientRect();
+    if (!forArt(event, { x: event.clientX - bounds.left, y: event.clientY - bounds.top })) {
+      event.r3Taken = true;
+      return;
+    }
     // A ship under the pointer is shot down, before the star or the planet take the click, and a
     // world of a solar system is jumped to.
     if (fleet.shoot(event.clientX - bounds.left, event.clientY - bounds.top)) {
@@ -1314,6 +1317,38 @@ function start(hero, art) {
     const dy = point.y - jewelPx.y;
     return dx * dx + dy * dy <= (jewelPx.radius * 1.6) ** 2;
   }
+  // Whether a point of the hero is on its text: a word, a button, the strip. The text column's box
+  // spans the whole hero, so its target says nothing; the boxes of what it actually shows do. A
+  // pointer there acts on the page, never on the art behind. Measured again at most twice a second.
+  let textRects = [];
+  let textMeasured = -Infinity;
+  function overText(point) {
+    const now = performance.now();
+    if (now - textMeasured > 500) {
+      textMeasured = now;
+      const bounds = hero.getBoundingClientRect();
+      const range = document.createRange();
+      textRects = [];
+      const add = (rect) => {
+        if (rect.width < 1 || rect.height < 1) return;
+        textRects.push({ left: rect.left - bounds.left - 6, top: rect.top - bounds.top - 4, right: rect.right - bounds.left + 6, bottom: rect.bottom - bounds.top + 4 });
+      };
+      for (const element of hero.querySelectorAll('.dw-kicker, .dw-hero__title, .dw-hero__summary, .dw-command')) {
+        range.selectNodeContents(element);
+        for (const rect of range.getClientRects()) add(rect);
+      }
+      for (const element of hero.querySelectorAll('.dw-actions > *, .dw-strip, .dw-hero__figure, .dw-hero__text img')) add(element.getBoundingClientRect());
+    }
+    return textRects.some((rect) => point.x >= rect.left && point.x <= rect.right && point.y >= rect.top && point.y <= rect.bottom);
+  }
+  // What a pointer event may do to the art: nothing from a secondary button, a link, the survey
+  // readout (which has its own click) or the text.
+  function forArt(event, point) {
+    if (!event.isPrimary || event.button > 0) return false;
+    if (event.target.closest('a, button, input, summary, [role="button"], .r3-survey')) return false;
+    return !overText(point);
+  }
+
   // A world of a solar system under the pointer: its name shows beside it, and a click jumps there.
   const waypoint = document.createElement('span');
   waypoint.className = 'r3-waypoint';
@@ -1337,9 +1372,9 @@ function start(hero, art) {
   }
   const interactive = 'a, button, input, summary, [role="button"]';
   hero.addEventListener('pointerdown', (event) => {
-    if (event.r3Taken || !event.isPrimary || event.button > 0 || event.target.closest(interactive)) return;
+    if (event.r3Taken) return;
     const point = heroPoint(event);
-    if (overJewel(point) || !overPlanet(point)) return;
+    if (!forArt(event, point) || overJewel(point) || !overPlanet(point)) return;
     planetDrag.active = true;
     planetDrag.id = event.pointerId;
     planetDrag.lastX = event.clientX;
@@ -1354,7 +1389,7 @@ function start(hero, art) {
   hero.addEventListener('pointermove', (event) => {
     if (!planetDrag.active) {
       const point = heroPoint(event);
-      const onLink = event.target.closest(interactive);
+      const onLink = event.target.closest(interactive) || event.target.closest('.r3-survey') || overText(point);
       const body = onLink ? null : systemWorldAt(point);
       hero.style.cursor = onLink ? '' : fleet.aimed(point.x, point.y) ? 'crosshair' : body || overJewel(point) ? 'pointer' : overPlanet(point) ? 'grab' : '';
       waypoint.classList.toggle('is-shown', !!body);
@@ -1789,10 +1824,10 @@ function start(hero, art) {
   }
   survey.addEventListener('click', () => beginJump());
   hero.addEventListener('dblclick', (event) => {
-    if (event.target.closest('a, button, input, summary, [role="button"], .r3-survey')) return;
     const bounds = hero.getBoundingClientRect();
     const point = { x: event.clientX - bounds.left, y: event.clientY - bounds.top };
-    if (fleet.aimed(point.x, point.y) || overJewel(point) || overPlanet(point)) return;
+    if (event.button > 0 || event.target.closest('a, button, input, summary, [role="button"], .r3-survey') || overText(point)) return;
+    if (fleet.aimed(point.x, point.y) || overJewel(point) || overPlanet(point) || systemWorldAt(point)) return;
     beginJump();
   });
   applyWorld(world);
